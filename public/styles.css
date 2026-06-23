@@ -74,6 +74,13 @@ h1 {
   gap: 12px;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .panel h2 {
   margin-bottom: 12px;
 }
@@ -120,6 +127,11 @@ button:hover {
   background: var(--accent-strong);
 }
 
+.button-row button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
 .hint {
   margin: 12px 0;
   color: var(--muted);
@@ -151,5 +163,19 @@ pre {
 @media (max-width: 760px) {
   form {
     grid-template-columns: 1fr;
+  }
+
+  .panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .button-row {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .button-row button {
+    flex: 1;
   }
 }

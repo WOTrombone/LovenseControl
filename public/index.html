@@ -11,11 +11,11 @@
 <body>
   <main class="app-shell">
     <section class="hero">
-      <p class="eyebrow">LovenseControl v0.1</p>
+      <p class="eyebrow">LovenseControl v0.2</p>
       <h1>Consent-first control routing.</h1>
       <p>
         This first build only proves the connection path: server health, Lovense auth token,
-        host QR setup, and callback logging. Controller routing comes after this works.
+        host QR setup, SDK events, and toy detection. Controller routing comes after this works.
       </p>
     </section>
 
@@ -46,6 +46,21 @@
       </p>
       <pre id="token-output">No session yet.</pre>
       <div id="qr-output" class="qr-output" hidden></div>
+    </section>
+
+    <section class="panel" aria-labelledby="sdk-heading">
+      <div class="panel-heading">
+        <h2 id="sdk-heading">Lovense SDK</h2>
+        <div class="button-row">
+          <button id="check-app-status" type="button">App Status</button>
+          <button id="get-toys" type="button">Get Toys</button>
+          <button id="stop-toys" type="button">Stop</button>
+        </div>
+      </div>
+      <p class="hint">
+        After scanning the QR code in Lovense Remote, this panel should show app and toy events.
+      </p>
+      <pre id="sdk-output">No SDK session yet.</pre>
     </section>
 
     <section class="panel" aria-labelledby="callback-heading">
