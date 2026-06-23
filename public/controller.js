@@ -17,9 +17,10 @@ const releaseStop = document.querySelector('#release-stop');
 
 let controllerId = '';
 let pollTimer;
-let sending = false;
+let sendTimer;
 let approved = false;
 let revoked = false;
+let controlsEnabled = false;
 
 nameInput.value = defaultName;
 title.textContent = defaultName;
@@ -31,13 +32,10 @@ nameInput.addEventListener('input', () => {
 });
 requestButton.addEventListener('click', requestAccess);
 intensity.addEventListener('input', () => {
-  intensityOutput.textContent = `${intensity.value} / 20`;
-  if (sending) sendIntent(true);
+  renderIntensity();
+  scheduleSendCurrentLevel();
 });
-sendHeld.addEventListener('pointerdown', startSending);
-sendHeld.addEventListener('pointerup', stopSending);
-sendHeld.addEventListener('pointercancel', stopSending);
-sendHeld.addEventListener('pointerleave', stopSending);
+sendHeld.addEventListener('click', sendCurrentLevel);
 releaseStop.addEventListener('click', stopSending);
 
 renderState();
@@ -100,7 +98,6 @@ function renderController(controller) {
     : 'The host has not assigned a toy to this controller yet.';
 
   if (revoked) {
-    sending = false;
     statusText.textContent = 'Revoked';
     note.textContent = 'The host has revoked this controller.';
     requestButton.hidden = true;
@@ -111,7 +108,7 @@ function renderController(controller) {
   if (approved) {
     statusText.textContent = 'Approved';
     note.textContent = hasAssignedToy
-      ? 'Hold Send to request the current intensity. Release stops your request.'
+      ? 'Move the slider to send a level. Set it to 0 or press Stop to stop.'
       : 'Waiting for the host to assign a toy.';
     requestButton.hidden = true;
     setControlEnabled(hasAssignedToy);
@@ -134,16 +131,22 @@ function renderState() {
   }
 }
 
-async function startSending(event) {
-  event.preventDefault();
-  if (!approved || revoked) return;
-  sending = true;
-  await sendIntent(true);
+function scheduleSendCurrentLevel() {
+  if (!controlsEnabled) return;
+  if (sendTimer) clearTimeout(sendTimer);
+  sendTimer = setTimeout(sendCurrentLevel, 150);
+}
+
+async function sendCurrentLevel() {
+  if (!controlsEnabled) return;
+  await sendIntent(Number(intensity.value || 0) > 0);
 }
 
 async function stopSending() {
-  if (!approved && !sending) return;
-  sending = false;
+  if (!approved && !controlsEnabled) return;
+  if (sendTimer) clearTimeout(sendTimer);
+  intensity.value = '0';
+  renderIntensity();
   await sendIntent(false);
 }
 
@@ -166,9 +169,15 @@ async function sendIntent(active) {
 }
 
 function setControlEnabled(enabled) {
+  controlsEnabled = enabled;
+  if (!enabled && sendTimer) clearTimeout(sendTimer);
   intensity.disabled = !enabled;
   sendHeld.disabled = !enabled;
   releaseStop.disabled = !enabled;
+}
+
+function renderIntensity() {
+  intensityOutput.textContent = `${intensity.value} / 20`;
 }
 
 async function getJson(url) {
