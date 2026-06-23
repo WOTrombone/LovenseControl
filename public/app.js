@@ -10,6 +10,7 @@ const toyList = document.querySelector('#toy-list');
 const refreshStateButton = document.querySelector('#refresh-state');
 const testVibrateButton = document.querySelector('#test-vibrate');
 const stopToysButton = document.querySelector('#stop-toys');
+const aliceLink = document.querySelector('#alice-link');
 const sdkEvents = [];
 let currentSdk;
 let state = {
@@ -28,6 +29,7 @@ document.querySelector('#get-toys').addEventListener('click', getToys);
 refreshStateButton.addEventListener('click', refreshSdkState);
 testVibrateButton.addEventListener('click', testVibrate);
 stopToysButton.addEventListener('click', stopToys);
+document.querySelector('#create-alice-link').addEventListener('click', createAliceLink);
 
 checkHealth();
 loadCallbacks();
@@ -356,12 +358,27 @@ function renderToy(toy) {
   const details = document.createElement('span');
   details.textContent = [
     toy.connected ? 'online' : 'offline',
-    toy.battery === undefined ? null : `${toy.battery}% battery`,
+    formatBattery(toy.battery),
     toy.id ? `id ${toy.id}` : null
   ].filter(Boolean).join(' · ');
 
   item.append(name, details);
   return item;
+}
+
+function createAliceLink() {
+  const roomId = crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : String(Date.now()).slice(-8);
+  const url = new URL('/controller.html', window.location.origin);
+  url.searchParams.set('name', 'Alice');
+  url.searchParams.set('room', roomId);
+  aliceLink.href = url.toString();
+  aliceLink.textContent = url.toString();
+  logSdkEvent('alicePreviewLinkCreated', { room: roomId });
+}
+
+function formatBattery(value) {
+  if (value === undefined || value === null || value === 0) return 'battery unknown';
+  return `${value}% battery`;
 }
 
 function normalizeToyList(value) {
