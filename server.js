@@ -26,7 +26,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.5.0',
+        version: '0.6.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform
       });

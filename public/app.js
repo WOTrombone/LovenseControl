@@ -10,7 +10,7 @@ const toyList = document.querySelector('#toy-list');
 const refreshStateButton = document.querySelector('#refresh-state');
 const testVibrateButton = document.querySelector('#test-vibrate');
 const stopToysButton = document.querySelector('#stop-toys');
-const aliceLink = document.querySelector('#alice-link');
+const controllerLink = document.querySelector('#controller-link');
 const sdkEvents = [];
 let currentSdk;
 let state = {
@@ -29,7 +29,7 @@ document.querySelector('#get-toys').addEventListener('click', getToys);
 refreshStateButton.addEventListener('click', refreshSdkState);
 testVibrateButton.addEventListener('click', testVibrate);
 stopToysButton.addEventListener('click', stopToys);
-document.querySelector('#create-alice-link').addEventListener('click', createAliceLink);
+document.querySelector('#create-controller-link').addEventListener('click', createControllerLink);
 
 checkHealth();
 loadCallbacks();
@@ -366,14 +366,14 @@ function renderToy(toy) {
   return item;
 }
 
-function createAliceLink() {
+function createControllerLink() {
   const roomId = crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : String(Date.now()).slice(-8);
   const url = new URL('/controller.html', window.location.origin);
-  url.searchParams.set('name', 'Alice');
+  url.searchParams.set('name', 'Bob');
   url.searchParams.set('room', roomId);
-  aliceLink.href = url.toString();
-  aliceLink.textContent = url.toString();
-  logSdkEvent('alicePreviewLinkCreated', { room: roomId });
+  controllerLink.href = url.toString();
+  controllerLink.textContent = url.toString();
+  logSdkEvent('controllerPreviewLinkCreated', { controller: 'Bob', room: roomId });
 }
 
 function formatBattery(value) {
