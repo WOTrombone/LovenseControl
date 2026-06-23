@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LovenseControl</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://api.lovense-api.com/basic-sdk/core.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hero">
+      <p class="eyebrow">LovenseControl v0.1</p>
+      <h1>Consent-first control routing.</h1>
+      <p>
+        This first build only proves the connection path: server health, Lovense auth token,
+        host QR setup, and callback logging. Controller routing comes after this works.
+      </p>
+    </section>
+
+    <section class="panel" aria-labelledby="status-heading">
+      <div class="panel-heading">
+        <h2 id="status-heading">Server</h2>
+        <button id="check-health" type="button">Check</button>
+      </div>
+      <pre id="health-output">Not checked yet.</pre>
+    </section>
+
+    <section class="panel" aria-labelledby="host-heading">
+      <h2 id="host-heading">Host Setup</h2>
+      <form id="host-form">
+        <label>
+          Host ID
+          <input name="uid" autocomplete="username" value="host-test">
+        </label>
+        <label>
+          Display Name
+          <input name="uname" autocomplete="name" value="Host">
+        </label>
+        <button type="submit">Create Lovense Session</button>
+      </form>
+      <p class="hint">
+        This calls your backend. Your Lovense Developer Token must stay in Render env vars,
+        never in browser code.
+      </p>
+      <pre id="token-output">No session yet.</pre>
+      <div id="qr-output" class="qr-output" hidden></div>
+    </section>
+
+    <section class="panel" aria-labelledby="callback-heading">
+      <div class="panel-heading">
+        <h2 id="callback-heading">Recent Callbacks</h2>
+        <button id="refresh-callbacks" type="button">Refresh</button>
+      </div>
+      <pre id="callback-output">No callbacks loaded.</pre>
+    </section>
+  </main>
+</body>
+</html>
