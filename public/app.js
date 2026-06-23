@@ -33,20 +33,20 @@ async function createHostSession(event) {
   qrOutput.replaceChildren();
   sdkEvents.length = 0;
   currentSdk = undefined;
-  logSdkEvent('hostSessionRequested', payload);
 
   const formData = new FormData(event.currentTarget);
   const payload = {
     uid: formData.get('uid'),
     uname: formData.get('uname')
   };
+  logSdkEvent('hostSessionRequested', payload);
 
   try {
-    const response = await fetch('/api/lovense/token', {
+    const response = await fetchWithTimeout('/api/lovense/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
-    });
+    }, 15000);
     const data = await response.json();
 
     if (!response.ok) {
@@ -64,6 +64,7 @@ async function createHostSession(event) {
     await renderLovenseQr(data);
   } catch (error) {
     tokenOutput.textContent = error instanceof Error ? error.message : String(error);
+    logSdkEvent('tokenRequestError', errorToText(error));
   }
 }
 
@@ -171,11 +172,30 @@ async function stopToys() {
 
 async function getJsonText(url) {
   try {
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url, {}, 10000);
     const data = await response.json();
     return JSON.stringify(data, null, 2);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

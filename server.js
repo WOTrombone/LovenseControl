@@ -16,6 +16,7 @@ const lovenseApiBase = process.env.LOVENSE_API_BASE || 'https://api.lovense-api.
 const lovenseDeveloperToken = process.env.LOVENSE_DEVELOPER_TOKEN;
 const lovensePlatform = process.env.LOVENSE_PLATFORM || 'LovenseControl';
 const callbackEvents = [];
+const lovenseRequestTimeoutMs = 10000;
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -25,7 +26,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.2.0',
+        version: '0.3.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform
       });
@@ -73,7 +74,7 @@ async function handleLovenseToken(req, res) {
   const uname = cleanName(body?.uname) || 'Host';
 
   try {
-    const lovenseResponse = await fetch(`${lovenseApiBase}/api/basicApi/getToken`, {
+    const lovenseResponse = await fetchWithTimeout(`${lovenseApiBase}/api/basicApi/getToken`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -81,7 +82,7 @@ async function handleLovenseToken(req, res) {
         uid,
         uname
       })
-    });
+    }, lovenseRequestTimeoutMs);
 
     const data = await lovenseResponse.json().catch(() => null);
 
@@ -100,10 +101,24 @@ async function handleLovenseToken(req, res) {
       authToken: data.data?.authToken
     });
   } catch (error) {
-    return sendJson(res, 502, {
+    return sendJson(res, error?.name === 'AbortError' ? 504 : 502, {
       error: 'Unable to reach Lovense token API.',
       message: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
