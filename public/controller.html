@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LovenseControl Controller</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/controller.js" defer></script>
+</head>
+<body>
+  <main class="controller-shell">
+    <section class="controller-card">
+      <p class="eyebrow">LovenseControl</p>
+      <h1 id="controller-title">Alice</h1>
+      <p id="room-label" class="hint">Waiting for host approval.</p>
+
+      <div class="controller-status">
+        <span class="status-label">Status</span>
+        <strong>Preview only</strong>
+        <p>
+          This page is intentionally simple. In the next routing build, the host approves Alice
+          and this slider sends requests to the host page, not directly to Lovense.
+        </p>
+      </div>
+
+      <label class="control-label">
+        Intensity request
+        <input id="intensity" type="range" min="0" max="20" value="0" disabled>
+      </label>
+      <output id="intensity-output">0 / 20</output>
+
+      <div class="button-row controller-actions">
+        <button type="button" disabled>Send While Held</button>
+        <button type="button" class="danger-button" disabled>Release / Stop</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

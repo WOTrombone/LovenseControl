@@ -27,6 +27,21 @@ body {
   padding: 32px 0;
 }
 
+.controller-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.controller-card {
+  width: min(520px, 100%);
+  padding: 24px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
 .hero {
   margin-bottom: 24px;
 }
@@ -53,10 +68,19 @@ h1 {
   line-height: 0.95;
 }
 
+.controller-card h1 {
+  margin-bottom: 8px;
+  font-size: clamp(2.4rem, 12vw, 5rem);
+}
+
 .hero p {
   max-width: 700px;
   color: var(--muted);
   font-size: 1.05rem;
+}
+
+a {
+  color: var(--text);
 }
 
 .panel {
@@ -93,6 +117,21 @@ h1 {
 
 .status-card strong {
   font-size: 1.2rem;
+}
+
+.controller-status {
+  display: grid;
+  gap: 6px;
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: #0d0f12;
+}
+
+.controller-status p {
+  margin: 0;
+  color: var(--muted);
 }
 
 .good {
@@ -133,6 +172,29 @@ label {
   gap: 6px;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.control-label {
+  margin-top: 18px;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+output {
+  display: block;
+  margin: 10px 0 18px;
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.controller-actions {
+  justify-content: stretch;
+}
+
+.controller-actions button {
+  flex: 1;
 }
 
 input,
@@ -197,6 +259,41 @@ button:disabled {
   color: var(--muted);
 }
 
+.controller-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: #0d0f12;
+}
+
+.controller-preview div {
+  display: grid;
+  gap: 3px;
+}
+
+.controller-preview span {
+  color: var(--muted);
+}
+
+.debug-panel {
+  color: var(--muted);
+}
+
+.debug-panel summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.debug-panel section {
+  margin-top: 18px;
+}
+
 .toy-item {
   display: grid;
   gap: 3px;
@@ -253,5 +350,10 @@ pre {
 
   .button-row button {
     flex: 1;
+  }
+
+  .controller-preview {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

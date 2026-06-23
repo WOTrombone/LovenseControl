@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.4: a host-dashboard spike.
+This is v0.5: a host-dashboard and controller-preview spike.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -16,6 +16,8 @@ This is v0.4: a host-dashboard spike.
 - The top of the page now shows host-facing status cards and safety controls.
 - `STOP ALL` is visible as soon as the SDK session exists.
 - `Test 1/20` stays disabled until a toy is detected online.
+- Diagnostics are tucked behind a collapsible panel.
+- `/controller.html` previews what Alice's simplified controller page can look like before routing is wired.
 
 No real controller routing is implemented yet.
 

@@ -11,7 +11,7 @@
 <body>
   <main class="app-shell">
     <section class="hero">
-      <p class="eyebrow">LovenseControl v0.4</p>
+      <p class="eyebrow">LovenseControl v0.5</p>
       <h1>Host dashboard.</h1>
       <p>
         Connect Lovense Remote, confirm toy status, and keep safety controls in the host's hands.
@@ -43,7 +43,7 @@
     </section>
 
     <section class="panel" aria-labelledby="host-heading">
-      <h2 id="host-heading">Host Setup</h2>
+        <h2 id="host-heading">Connect Lovense Remote</h2>
       <form id="host-form">
         <label>
           Host ID
@@ -53,7 +53,7 @@
           Display Name
           <input name="uname" autocomplete="name" value="Host">
         </label>
-        <button type="submit">Create Lovense Session</button>
+        <button type="submit">Create QR Session</button>
       </form>
       <p class="hint">
         This calls your backend. Your Lovense Developer Token must stay in Render env vars,
@@ -61,6 +61,23 @@
       </p>
       <pre id="token-output">No session yet.</pre>
       <div id="qr-output" class="qr-output" hidden></div>
+    </section>
+
+    <section class="panel" aria-labelledby="controller-heading">
+      <div class="panel-heading">
+        <h2 id="controller-heading">Controller Preview</h2>
+        <button id="create-alice-link" type="button">Create Alice Link</button>
+      </div>
+      <p class="hint">
+        This is only the next-screen preview. Alice can see the simple controller page, but routing is not wired yet.
+      </p>
+      <div class="controller-preview">
+        <div>
+          <strong>Alice</strong>
+          <span>Waiting for host approval flow</span>
+        </div>
+        <a id="alice-link" href="/controller.html?name=Alice&room=demo" target="_blank" rel="noreferrer">Open Alice controller</a>
+      </div>
     </section>
 
     <section class="panel safety-panel" aria-labelledby="safety-heading">
@@ -78,24 +95,27 @@
       <div id="toy-list" class="toy-list">No toys found yet.</div>
     </section>
 
-    <section class="panel" aria-labelledby="sdk-heading">
-      <div class="panel-heading">
-        <h2 id="sdk-heading">SDK Event Log</h2>
-        <div class="button-row">
-          <button id="check-app-status" type="button">App Status</button>
-          <button id="get-toys" type="button">Get Toys</button>
+    <details class="panel debug-panel">
+      <summary>Diagnostics</summary>
+      <section aria-labelledby="sdk-heading">
+        <div class="panel-heading">
+          <h2 id="sdk-heading">SDK Event Log</h2>
+          <div class="button-row">
+            <button id="check-app-status" type="button">App Status</button>
+            <button id="get-toys" type="button">Get Toys</button>
+          </div>
         </div>
-      </div>
-      <pre id="sdk-output">No SDK session yet.</pre>
-    </section>
+        <pre id="sdk-output">No SDK session yet.</pre>
+      </section>
 
-    <section class="panel" aria-labelledby="callback-heading">
-      <div class="panel-heading">
-        <h2 id="callback-heading">Recent Callbacks</h2>
-        <button id="refresh-callbacks" type="button">Refresh</button>
-      </div>
-      <pre id="callback-output">No callbacks loaded.</pre>
-    </section>
+      <section aria-labelledby="callback-heading">
+        <div class="panel-heading">
+          <h2 id="callback-heading">Recent Callbacks</h2>
+          <button id="refresh-callbacks" type="button">Refresh</button>
+        </div>
+        <pre id="callback-output">No callbacks loaded.</pre>
+      </section>
+    </details>
   </main>
 </body>
 </html>
