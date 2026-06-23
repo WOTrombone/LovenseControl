@@ -11,17 +11,22 @@
   <main class="controller-shell">
     <section class="controller-card">
       <p class="eyebrow">LovenseControl</p>
-      <h1 id="controller-title">Bob</h1>
-      <p id="room-label" class="hint">Waiting for host approval.</p>
+      <h1 id="controller-title">Controller</h1>
+      <p id="room-label" class="hint">Waiting for a room.</p>
 
       <div class="controller-status">
         <span class="status-label">Status</span>
-        <strong>Preview only</strong>
-        <p>
-          This page is intentionally simple. In the next routing build, Alice approves this controller
-          and this slider sends requests to Alice's host page, not directly to Lovense.
+        <strong id="controller-status">Not connected</strong>
+        <p id="controller-note">
+          Ask the host for an invite link. The host approves access before this page can send requests.
         </p>
       </div>
+
+      <label>
+        Display name
+        <input id="controller-name" autocomplete="name" value="Controller">
+      </label>
+      <button id="request-access" type="button">Request Control</button>
 
       <label class="control-label">
         Intensity request
@@ -30,8 +35,8 @@
       <output id="intensity-output">0 / 20</output>
 
       <div class="button-row controller-actions">
-        <button type="button" disabled>Send While Held</button>
-        <button type="button" class="danger-button" disabled>Release / Stop</button>
+        <button id="send-held" type="button" disabled>Send While Held</button>
+        <button id="release-stop" type="button" class="danger-button" disabled>Release / Stop</button>
       </div>
     </section>
   </main>

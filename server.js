@@ -17,6 +17,7 @@ const lovenseDeveloperToken = process.env.LOVENSE_DEVELOPER_TOKEN;
 const lovensePlatform = process.env.LOVENSE_PLATFORM || 'LovenseControl';
 const callbackEvents = [];
 const lovenseRequestTimeoutMs = 10000;
+const rooms = new Map();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -26,10 +27,18 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.6.0',
+        version: '0.7.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform
       });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/rooms') {
+      return handleCreateRoom(req, res);
+    }
+
+    if (url.pathname.startsWith('/api/rooms/')) {
+      return handleRoomRoute(req, res, url);
     }
 
     if (req.method === 'POST' && url.pathname === '/api/lovense/token') {
@@ -106,6 +115,105 @@ async function handleLovenseToken(req, res) {
       message: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+async function handleCreateRoom(req, res) {
+  const body = await readJsonBody(req);
+  const roomId = crypto.randomUUID().slice(0, 8);
+  const room = {
+    id: roomId,
+    hostName: cleanName(body?.hostName) || 'Host',
+    createdAt: new Date().toISOString(),
+    controllers: new Map()
+  };
+
+  rooms.set(roomId, room);
+  return sendJson(res, 201, serializeRoom(room));
+}
+
+async function handleRoomRoute(req, res, url) {
+  const parts = url.pathname.split('/').filter(Boolean);
+  const roomId = cleanId(parts[2]);
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    return sendJson(res, 404, { error: 'Room not found.' });
+  }
+
+  if (req.method === 'GET' && parts.length === 3) {
+    return sendJson(res, 200, serializeRoom(room));
+  }
+
+  if (parts[3] !== 'controllers') {
+    return sendJson(res, 404, { error: 'Not found', path: url.pathname });
+  }
+
+  if (req.method === 'POST' && parts.length === 4) {
+    const body = await readJsonBody(req);
+    const controllerId = crypto.randomUUID().slice(0, 8);
+    const controller = {
+      id: controllerId,
+      name: cleanName(body?.name) || 'Controller',
+      approved: false,
+      revoked: false,
+      connected: true,
+      intent: {
+        active: false,
+        intensity: 0,
+        updatedAt: new Date().toISOString()
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    room.controllers.set(controllerId, controller);
+    return sendJson(res, 201, serializeController(controller));
+  }
+
+  const controllerId = cleanId(parts[4]);
+  const controller = room.controllers.get(controllerId);
+
+  if (!controller) {
+    return sendJson(res, 404, { error: 'Controller not found.' });
+  }
+
+  if (req.method === 'GET' && parts.length === 5) {
+    return sendJson(res, 200, serializeController(controller));
+  }
+
+  if (req.method === 'POST' && parts[5] === 'intent') {
+    const body = await readJsonBody(req);
+    const intensity = clampIntensity(body?.intensity);
+    const active = Boolean(body?.active) && intensity > 0;
+
+    controller.intent = {
+      active,
+      intensity: active ? intensity : 0,
+      updatedAt: new Date().toISOString()
+    };
+    controller.connected = true;
+    controller.updatedAt = new Date().toISOString();
+
+    return sendJson(res, 200, serializeController(controller));
+  }
+
+  if (req.method === 'POST' && parts[5] === 'approval') {
+    const body = await readJsonBody(req);
+    controller.approved = Boolean(body?.approved);
+    controller.revoked = !controller.approved && Boolean(body?.revoked);
+    if (!controller.approved) {
+      controller.intent = {
+        active: false,
+        intensity: 0,
+        updatedAt: new Date().toISOString()
+      };
+    }
+    controller.updatedAt = new Date().toISOString();
+
+    return sendJson(res, 200, serializeController(controller));
+  }
+
+  return sendJson(res, 404, { error: 'Not found', path: url.pathname });
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {
@@ -220,6 +328,34 @@ function cleanId(value) {
 function cleanName(value) {
   if (typeof value !== 'string') return '';
   return value.trim().replace(/\s+/g, ' ').slice(0, 64);
+}
+
+function clampIntensity(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(20, Math.round(number)));
+}
+
+function serializeRoom(room) {
+  return {
+    id: room.id,
+    hostName: room.hostName,
+    createdAt: room.createdAt,
+    controllers: Array.from(room.controllers.values()).map(serializeController)
+  };
+}
+
+function serializeController(controller) {
+  return {
+    id: controller.id,
+    name: controller.name,
+    approved: controller.approved,
+    revoked: controller.revoked,
+    connected: controller.connected,
+    intent: controller.intent,
+    createdAt: controller.createdAt,
+    updatedAt: controller.updatedAt
+  };
 }
 
 function summarizeToys(toys) {

@@ -11,10 +11,10 @@
 <body>
   <main class="app-shell">
     <section class="hero">
-      <p class="eyebrow">LovenseControl v0.6</p>
+      <p class="eyebrow">LovenseControl v0.7</p>
       <h1>Host dashboard.</h1>
       <p>
-        Alice connects Lovense Remote, confirms toy status, and keeps safety controls in her hands.
+        The host connects Lovense Remote, confirms toy status, and keeps safety controls in their hands.
         Controller routing comes after STOP ALL and toy detection are proven.
       </p>
     </section>
@@ -63,21 +63,29 @@
       <div id="qr-output" class="qr-output" hidden></div>
     </section>
 
-    <section class="panel" aria-labelledby="controller-heading">
+    <section class="panel" aria-labelledby="routing-heading">
       <div class="panel-heading">
-        <h2 id="controller-heading">Controller Preview</h2>
-        <button id="create-controller-link" type="button">Create Bob Link</button>
+        <h2 id="routing-heading">Controller Routing</h2>
+        <button id="create-room" type="button">Create Room</button>
       </div>
       <p class="hint">
-        This is only the next-screen preview. Bob can see the simple controller page, but routing is not wired yet.
+        Controllers request access here. The host approves them, sets the cap, and the host page sends allowed commands to Lovense.
       </p>
-      <div class="controller-preview">
-        <div>
-          <strong>Bob</strong>
-          <span>Waiting for Alice's approval flow</span>
-        </div>
-        <a id="controller-link" href="/controller.html?name=Bob&room=demo" target="_blank" rel="noreferrer">Open Bob controller</a>
+      <div class="routing-layout">
+        <label>
+          Max intensity cap
+          <input id="intensity-cap" type="number" min="0" max="20" value="5">
+        </label>
+        <label class="checkbox-label">
+          <input id="routing-enabled" type="checkbox">
+          Enable live routing
+        </label>
+        <label>
+          Controller invite
+          <input id="controller-link" readonly value="Create a room first.">
+        </label>
       </div>
+      <div id="controllers-list" class="controllers-list">No controller room yet.</div>
     </section>
 
     <section class="panel safety-panel" aria-labelledby="safety-heading">
@@ -85,12 +93,12 @@
         <h2 id="safety-heading">Safety</h2>
         <div class="button-row">
           <button id="refresh-state" type="button">Refresh State</button>
-          <button id="test-vibrate" type="button" disabled>Test 1/20</button>
+          <button id="test-vibrate" type="button" disabled>Test All 1/20</button>
           <button id="stop-toys" class="danger-button" type="button" disabled>STOP ALL</button>
         </div>
       </div>
       <p class="hint">
-        STOP ALL is the first control to prove. Test vibration stays disabled until a toy is online.
+        STOP ALL is the first control to prove. Test All sends 1/20 to every connected toy.
       </p>
       <div id="toy-list" class="toy-list">No toys found yet.</div>
     </section>

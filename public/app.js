@@ -11,14 +11,23 @@ const refreshStateButton = document.querySelector('#refresh-state');
 const testVibrateButton = document.querySelector('#test-vibrate');
 const stopToysButton = document.querySelector('#stop-toys');
 const controllerLink = document.querySelector('#controller-link');
+const createRoomButton = document.querySelector('#create-room');
+const controllersList = document.querySelector('#controllers-list');
+const intensityCap = document.querySelector('#intensity-cap');
+const routingEnabled = document.querySelector('#routing-enabled');
 const sdkEvents = [];
 let currentSdk;
+let roomPollTimer;
+let lastAppliedIntensity = 0;
+let lastAppliedControllerId = '';
+let lastCommandAt = 0;
 let state = {
   backendOk: false,
   appConnected: false,
   toyOnline: false,
   toys: [],
-  deviceInfo: null
+  deviceInfo: null,
+  room: null
 };
 
 document.querySelector('#check-health').addEventListener('click', checkHealth);
@@ -29,7 +38,12 @@ document.querySelector('#get-toys').addEventListener('click', getToys);
 refreshStateButton.addEventListener('click', refreshSdkState);
 testVibrateButton.addEventListener('click', testVibrate);
 stopToysButton.addEventListener('click', stopToys);
-document.querySelector('#create-controller-link').addEventListener('click', createControllerLink);
+createRoomButton.addEventListener('click', createRoom);
+controllersList.addEventListener('click', handleControllerAction);
+routingEnabled.addEventListener('change', () => {
+  logSdkEvent('routingEnabledChange', routingEnabled.checked);
+  if (!routingEnabled.checked) stopToys();
+});
 
 checkHealth();
 loadCallbacks();
@@ -226,6 +240,7 @@ async function getToys() {
       toyOnline: normalizeToyList(onlineToys).length > 0 || normalizedToys.some((toy) => toy.connected)
     };
     renderHostState();
+    await applyControllerIntent();
     logSdkEvent('getToys', { onlineToys, toys });
   } catch (error) {
     logSdkEvent('getToysError', errorToText(error));
@@ -245,10 +260,208 @@ async function stopToys() {
 
   try {
     const result = await currentSdk.stopToyAction();
+    lastAppliedIntensity = 0;
+    lastAppliedControllerId = '';
+    lastCommandAt = Date.now();
     logSdkEvent('stopToyAction', result || 'sent');
     await getToys();
   } catch (error) {
     logSdkEvent('stopError', errorToText(error));
+  }
+}
+
+async function createRoom() {
+  createRoomButton.disabled = true;
+  createRoomButton.textContent = 'Creating...';
+
+  try {
+    const hostName = document.querySelector('[name="uname"]').value || 'Host';
+    const response = await fetchWithTimeout('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostName })
+    }, 10000);
+    const room = await response.json();
+
+    if (!response.ok) {
+      throw new Error(room.error || 'Could not create room.');
+    }
+
+    state = {
+      ...state,
+      room
+    };
+    const url = new URL('/controller.html', window.location.origin);
+    url.searchParams.set('room', room.id);
+    url.searchParams.set('name', 'Controller');
+    controllerLink.value = url.toString();
+    logSdkEvent('roomCreated', { room: room.id });
+    renderControllers();
+    startRoomPolling();
+  } catch (error) {
+    controllersList.textContent = errorToText(error);
+    logSdkEvent('roomCreateError', errorToText(error));
+  } finally {
+    createRoomButton.disabled = false;
+    createRoomButton.textContent = 'Create Room';
+  }
+}
+
+function startRoomPolling() {
+  if (roomPollTimer) clearInterval(roomPollTimer);
+  roomPollTimer = setInterval(pollRoom, 1000);
+  pollRoom();
+}
+
+async function pollRoom() {
+  if (!state.room?.id) return;
+
+  try {
+    const room = await getJson(`/api/rooms/${state.room.id}`);
+    state = {
+      ...state,
+      room
+    };
+    renderControllers();
+    await applyControllerIntent();
+  } catch (error) {
+    logSdkEvent('roomPollError', errorToText(error));
+  }
+}
+
+async function handleControllerAction(event) {
+  const button = event.target.closest('button[data-controller-id]');
+  if (!button || !state.room?.id) return;
+
+  const controllerId = button.dataset.controllerId;
+  const action = button.dataset.action;
+  const approved = action === 'approve';
+
+  try {
+    const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/controllers/${controllerId}/approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approved,
+        revoked: action === 'revoke'
+      })
+    }, 10000);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Controller update failed.');
+    }
+
+    logSdkEvent('controllerApproval', {
+      controller: data.name,
+      approved: data.approved,
+      revoked: data.revoked
+    });
+    await pollRoom();
+  } catch (error) {
+    logSdkEvent('controllerApprovalError', errorToText(error));
+  }
+}
+
+function renderControllers() {
+  if (!state.room) {
+    controllersList.textContent = 'No controller room yet.';
+    return;
+  }
+
+  if (state.room.controllers.length === 0) {
+    controllersList.textContent = 'Room is open. Waiting for a controller to request access.';
+    return;
+  }
+
+  controllersList.replaceChildren(...state.room.controllers.map(renderController));
+}
+
+function renderController(controller) {
+  const item = document.createElement('div');
+  item.className = 'controller-item';
+
+  const info = document.createElement('div');
+  const name = document.createElement('strong');
+  name.textContent = controller.name || 'Controller';
+  const details = document.createElement('span');
+  details.textContent = [
+    controller.revoked ? 'revoked' : controller.approved ? 'approved' : 'pending',
+    controller.intent?.active ? `requesting ${controller.intent.intensity}/20` : 'idle'
+  ].join(' · ');
+  info.append(name, details);
+
+  const actions = document.createElement('div');
+  actions.className = 'button-row';
+
+  const approve = document.createElement('button');
+  approve.type = 'button';
+  approve.textContent = 'Approve';
+  approve.disabled = controller.approved && !controller.revoked;
+  approve.dataset.action = 'approve';
+  approve.dataset.controllerId = controller.id;
+
+  const revoke = document.createElement('button');
+  revoke.type = 'button';
+  revoke.textContent = 'Revoke';
+  revoke.className = 'danger-button';
+  revoke.disabled = controller.revoked;
+  revoke.dataset.action = 'revoke';
+  revoke.dataset.controllerId = controller.id;
+
+  actions.append(approve, revoke);
+  item.append(info, actions);
+  return item;
+}
+
+async function applyControllerIntent() {
+  if (!currentSdk || !state.room || !routingEnabled.checked) return;
+
+  const controller = state.room.controllers.find((candidate) => {
+    return candidate.approved && !candidate.revoked && candidate.intent?.active && candidate.intent.intensity > 0;
+  });
+
+  const desired = controller
+    ? Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity))
+    : 0;
+
+  if (desired > 0 && !state.toyOnline) {
+    logSdkEvent('routingBlocked', 'No online toy detected.');
+    return;
+  }
+
+  if (desired === 0) {
+    if (lastAppliedIntensity > 0) await stopToys();
+    return;
+  }
+
+  const now = Date.now();
+  const shouldSend = desired !== lastAppliedIntensity
+    || controller.id !== lastAppliedControllerId
+    || now - lastCommandAt > 1500;
+
+  if (!shouldSend) return;
+
+  const command = {
+    vibrate: desired,
+    time: 2
+  };
+  const targets = connectedToys();
+
+  try {
+    const result = await currentSdk.sendToyCommand(command);
+    lastAppliedIntensity = desired;
+    lastAppliedControllerId = controller.id;
+    lastCommandAt = now;
+    logSdkEvent('routedControllerIntent', {
+      controller: controller.name,
+      requested: controller.intent.intensity,
+      sent: desired,
+      targets: summarizeToyTargets(targets),
+      result: result || 'sent'
+    });
+  } catch (error) {
+    logSdkEvent('routingError', errorToText(error));
   }
 }
 
@@ -264,15 +477,18 @@ async function testVibrate() {
   }
 
   try {
-    const firstToy = state.toys.find((toy) => toy.connected) || state.toys[0];
+    const targets = connectedToys();
     const command = {
       vibrate: 1,
       time: 2
     };
-    if (firstToy?.id) command.toyId = firstToy.id;
 
     const result = await currentSdk.sendToyCommand(command);
-    logSdkEvent('testVibrate1of20', result || command);
+    logSdkEvent('testVibrateAll1of20', {
+      command,
+      targets: summarizeToyTargets(targets),
+      result: result || 'sent'
+    });
   } catch (error) {
     logSdkEvent('testVibrateError', errorToText(error));
   }
@@ -366,14 +582,17 @@ function renderToy(toy) {
   return item;
 }
 
-function createControllerLink() {
-  const roomId = crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : String(Date.now()).slice(-8);
-  const url = new URL('/controller.html', window.location.origin);
-  url.searchParams.set('name', 'Bob');
-  url.searchParams.set('room', roomId);
-  controllerLink.href = url.toString();
-  controllerLink.textContent = url.toString();
-  logSdkEvent('controllerPreviewLinkCreated', { controller: 'Bob', room: roomId });
+function connectedToys() {
+  const toys = state.toys.filter((toy) => toy.connected);
+  return toys.length > 0 ? toys : state.toys;
+}
+
+function summarizeToyTargets(toys) {
+  if (toys.length === 0) return ['all connected toys'];
+  return toys.map((toy) => ({
+    id: toy.id,
+    name: toy.nickname || toy.name || toy.toyType || 'Lovense toy'
+  }));
 }
 
 function formatBattery(value) {
@@ -392,4 +611,10 @@ function normalizeToyList(value) {
     battery: toy.battery,
     connected: toy.connected === undefined ? toy.status === 1 || toy.status === '1' : Boolean(toy.connected)
   }));
+}
+
+function clampIntensity(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(20, Math.round(number)));
 }

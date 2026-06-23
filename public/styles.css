@@ -182,6 +182,12 @@ input[type="range"] {
   accent-color: var(--accent);
 }
 
+input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  accent-color: var(--accent);
+}
+
 output {
   display: block;
   margin: 10px 0 18px;
@@ -257,6 +263,47 @@ button:disabled {
   display: grid;
   gap: 8px;
   color: var(--muted);
+}
+
+.routing-layout {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(160px, 220px) 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+
+.controllers-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--muted);
+}
+
+.controller-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: #0d0f12;
+}
+
+.controller-item div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.controller-item strong {
+  color: var(--text);
 }
 
 .controller-preview {
@@ -350,6 +397,15 @@ pre {
 
   .button-row button {
     flex: 1;
+  }
+
+  .routing-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .controller-item {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .controller-preview {
