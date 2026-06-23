@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.9: a first per-controller toy assignment spike.
+This is v0.10: controller-visible toy assignment.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -20,6 +20,7 @@ This is v0.9: a first per-controller toy assignment spike.
 - The host can create an in-memory controller room and copy a controller invite link.
 - `/controller.html` lets a controller request access, wait for host approval, and send held intensity requests.
 - The host can assign each controller to a detected toy.
+- Controllers can see which toy the host assigned to them.
 - Controller requests are routed through the host page to the assigned toy only, where the host's routing toggle, intensity cap, and STOP ALL remain in control.
 
 Repeating pattern controls come next.

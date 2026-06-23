@@ -447,11 +447,13 @@ async function handleControllerAssignment(event) {
   if (!select || !state.room?.id) return;
 
   try {
+    const selectedToy = toyById(select.value);
     const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/controllers/${select.dataset.controllerId}/assignment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        assignedToyId: select.value
+        assignedToyId: select.value,
+        assignedToyName: selectedToy ? toyLabel(selectedToy) : ''
       })
     }, 10000);
     const data = await response.json();
@@ -462,7 +464,8 @@ async function handleControllerAssignment(event) {
 
     logSdkEvent('controllerAssignment', {
       controller: data.name,
-      assignedToyId: data.assignedToyId || '[none]'
+      assignedToyId: data.assignedToyId || '[none]',
+      assignedToyName: data.assignedToyName || '[none]'
     });
     await pollRoom();
   } catch (error) {

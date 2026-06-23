@@ -27,7 +27,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.9.0',
+        version: '0.10.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform
       });
@@ -155,6 +155,7 @@ async function handleRoomRoute(req, res, url) {
       id: controllerId,
       name: cleanName(body?.name) || 'Controller',
       assignedToyId: '',
+      assignedToyName: '',
       approved: false,
       revoked: false,
       connected: true,
@@ -217,6 +218,7 @@ async function handleRoomRoute(req, res, url) {
   if (req.method === 'POST' && parts[5] === 'assignment') {
     const body = await readJsonBody(req);
     controller.assignedToyId = cleanId(body?.assignedToyId);
+    controller.assignedToyName = controller.assignedToyId ? cleanName(body?.assignedToyName) : '';
     controller.updatedAt = new Date().toISOString();
 
     return sendJson(res, 200, serializeController(controller));
@@ -359,6 +361,7 @@ function serializeController(controller) {
     id: controller.id,
     name: controller.name,
     assignedToyId: controller.assignedToyId || '',
+    assignedToyName: controller.assignedToyName || '',
     approved: controller.approved,
     revoked: controller.revoked,
     connected: controller.connected,

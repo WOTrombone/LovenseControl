@@ -6,6 +6,8 @@ const title = document.querySelector('#controller-title');
 const roomLabel = document.querySelector('#room-label');
 const statusText = document.querySelector('#controller-status');
 const note = document.querySelector('#controller-note');
+const assignedToy = document.querySelector('#assigned-toy');
+const assignedToyNote = document.querySelector('#assigned-toy-note');
 const nameInput = document.querySelector('#controller-name');
 const requestButton = document.querySelector('#request-access');
 const intensity = document.querySelector('#intensity');
@@ -89,6 +91,13 @@ async function loadController() {
 function renderController(controller) {
   approved = Boolean(controller.approved);
   revoked = Boolean(controller.revoked);
+  const toyName = cleanName(controller.assignedToyName) || cleanId(controller.assignedToyId);
+  const hasAssignedToy = Boolean(controller.assignedToyId);
+
+  assignedToy.textContent = toyName || 'Not assigned yet';
+  assignedToyNote.textContent = hasAssignedToy
+    ? 'Requests from this page go only to this assigned toy.'
+    : 'The host has not assigned a toy to this controller yet.';
 
   if (revoked) {
     sending = false;
@@ -101,9 +110,11 @@ function renderController(controller) {
 
   if (approved) {
     statusText.textContent = 'Approved';
-    note.textContent = 'Hold Send to request the current intensity. Release stops your request.';
+    note.textContent = hasAssignedToy
+      ? 'Hold Send to request the current intensity. Release stops your request.'
+      : 'Waiting for the host to assign a toy.';
     requestButton.hidden = true;
-    setControlEnabled(true);
+    setControlEnabled(hasAssignedToy);
     return;
   }
 
@@ -117,6 +128,8 @@ function renderState() {
   if (!roomId) {
     statusText.textContent = 'Missing room';
     note.textContent = 'Open a controller invite link from the host dashboard.';
+    assignedToy.textContent = 'Not assigned yet';
+    assignedToyNote.textContent = 'The host chooses which toy this controller can affect.';
     setControlEnabled(false);
   }
 }
