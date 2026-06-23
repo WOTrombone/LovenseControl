@@ -20,9 +20,7 @@ const routingEnabled = document.querySelector('#routing-enabled');
 const sdkEvents = [];
 let currentSdk;
 let roomPollTimer;
-let lastAppliedIntensity = 0;
-let lastAppliedControllerId = '';
-let lastCommandAt = 0;
+const lastToyCommands = new Map();
 let state = {
   backendOk: false,
   appConnected: false,
@@ -46,6 +44,7 @@ toyList.addEventListener('click', handleToyListClick);
 stopToysButton.addEventListener('click', stopToys);
 createRoomButton.addEventListener('click', createRoom);
 controllersList.addEventListener('click', handleControllerAction);
+controllersList.addEventListener('change', handleControllerAssignment);
 routingEnabled.addEventListener('change', () => {
   logSdkEvent('routingEnabledChange', routingEnabled.checked);
   if (!routingEnabled.checked) stopToys();
@@ -266,9 +265,7 @@ async function stopToys() {
 
   try {
     const result = await currentSdk.stopToyAction();
-    lastAppliedIntensity = 0;
-    lastAppliedControllerId = '';
-    lastCommandAt = Date.now();
+    lastToyCommands.clear();
     logSdkEvent('stopToyAction', result || 'sent');
     await getToys();
   } catch (error) {
@@ -391,11 +388,36 @@ function renderController(controller) {
   const name = document.createElement('strong');
   name.textContent = controller.name || 'Controller';
   const details = document.createElement('span');
+  const assignedToy = toyById(controller.assignedToyId);
   details.textContent = [
     controller.revoked ? 'revoked' : controller.approved ? 'approved' : 'pending',
+    assignedToy ? `assigned to ${toyLabel(assignedToy)}` : 'no toy assigned',
     controller.intent?.active ? `requesting ${controller.intent.intensity}/20` : 'idle'
   ].join(' · ');
   info.append(name, details);
+
+  const assignment = document.createElement('label');
+  assignment.className = 'assignment-label';
+  assignment.textContent = 'Assign toy';
+
+  const select = document.createElement('select');
+  select.dataset.controllerId = controller.id;
+  select.disabled = controller.revoked || state.toys.length === 0;
+
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = state.toys.length === 0 ? 'No toys detected' : 'Choose toy';
+  select.append(empty);
+
+  state.toys.forEach((toy) => {
+    const option = document.createElement('option');
+    option.value = toy.id;
+    option.textContent = toyLabel(toy);
+    option.disabled = !toy.connected || !toy.id;
+    select.append(option);
+  });
+  select.value = controller.assignedToyId || '';
+  assignment.append(select);
 
   const actions = document.createElement('div');
   actions.className = 'button-row';
@@ -416,58 +438,119 @@ function renderController(controller) {
   revoke.dataset.controllerId = controller.id;
 
   actions.append(approve, revoke);
-  item.append(info, actions);
+  item.append(info, assignment, actions);
   return item;
+}
+
+async function handleControllerAssignment(event) {
+  const select = event.target.closest('select[data-controller-id]');
+  if (!select || !state.room?.id) return;
+
+  try {
+    const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/controllers/${select.dataset.controllerId}/assignment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        assignedToyId: select.value
+      })
+    }, 10000);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Controller assignment failed.');
+    }
+
+    logSdkEvent('controllerAssignment', {
+      controller: data.name,
+      assignedToyId: data.assignedToyId || '[none]'
+    });
+    await pollRoom();
+  } catch (error) {
+    logSdkEvent('controllerAssignmentError', errorToText(error));
+  }
 }
 
 async function applyControllerIntent() {
   if (!currentSdk || !state.room || !routingEnabled.checked) return;
 
-  const controller = state.room.controllers.find((candidate) => {
-    return candidate.approved && !candidate.revoked && candidate.intent?.active && candidate.intent.intensity > 0;
-  });
-
-  const desired = controller
-    ? Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity))
-    : 0;
-
-  if (desired > 0 && !state.toyOnline) {
+  if (!state.toyOnline) {
     logSdkEvent('routingBlocked', 'No online toy detected.');
     return;
   }
 
-  if (desired === 0) {
-    if (lastAppliedIntensity > 0) await stopToys();
-    return;
+  const activeToyIds = new Set();
+  const onlineToyIds = new Set(connectedToys().map((toy) => toy.id).filter(Boolean));
+  const now = Date.now();
+  const routes = state.room.controllers.filter((controller) => {
+    return controller.approved
+      && !controller.revoked
+      && controller.assignedToyId
+      && onlineToyIds.has(controller.assignedToyId)
+      && controller.intent?.active
+      && controller.intent.intensity > 0;
+  });
+
+  for (const controller of routes) {
+    if (activeToyIds.has(controller.assignedToyId)) continue;
+
+    const desired = Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity));
+    const previous = lastToyCommands.get(controller.assignedToyId);
+    const shouldSend = !previous
+      || desired !== previous.intensity
+      || controller.id !== previous.controllerId
+      || now - previous.at > 1500;
+
+    activeToyIds.add(controller.assignedToyId);
+    if (!shouldSend || desired <= 0) continue;
+
+    const command = {
+      vibrate: desired,
+      time: 2,
+      toyId: controller.assignedToyId
+    };
+    const toy = toyById(controller.assignedToyId);
+
+    try {
+      const result = await currentSdk.sendToyCommand(command);
+      lastToyCommands.set(controller.assignedToyId, {
+        intensity: desired,
+        controllerId: controller.id,
+        at: now
+      });
+      logSdkEvent('routedControllerIntent', {
+        controller: controller.name,
+        requested: controller.intent.intensity,
+        sent: desired,
+        target: toy ? summarizeToyTargets([toy])[0] : controller.assignedToyId,
+        result: result || 'sent'
+      });
+    } catch (error) {
+      logSdkEvent('routingError', errorToText(error));
+    }
   }
 
-  const now = Date.now();
-  const shouldSend = desired !== lastAppliedIntensity
-    || controller.id !== lastAppliedControllerId
-    || now - lastCommandAt > 1500;
+  for (const [toyId] of lastToyCommands) {
+    if (!activeToyIds.has(toyId)) {
+      await stopToy(toyId);
+    }
+  }
+}
 
-  if (!shouldSend) return;
-
-  const command = {
-    vibrate: desired,
-    time: 2
-  };
-  const targets = connectedToys();
-
+async function stopToy(toyId) {
   try {
+    const command = {
+      vibrate: 0,
+      time: 2,
+      toyId
+    };
     const result = await currentSdk.sendToyCommand(command);
-    lastAppliedIntensity = desired;
-    lastAppliedControllerId = controller.id;
-    lastCommandAt = now;
-    logSdkEvent('routedControllerIntent', {
-      controller: controller.name,
-      requested: controller.intent.intensity,
-      sent: desired,
-      targets: summarizeToyTargets(targets),
+    lastToyCommands.delete(toyId);
+    logSdkEvent('routedToyStop', {
+      toyId,
       result: result || 'sent'
     });
   } catch (error) {
-    logSdkEvent('routingError', errorToText(error));
+    logSdkEvent('routingStopError', errorToText(error));
   }
 }
 
@@ -646,11 +729,19 @@ function connectedToys() {
   return toys.length > 0 ? toys : state.toys;
 }
 
+function toyById(toyId) {
+  return state.toys.find((toy) => toy.id === toyId);
+}
+
+function toyLabel(toy) {
+  return toy.nickname || toy.name || toy.toyType || toy.id || 'Lovense toy';
+}
+
 function summarizeToyTargets(toys) {
   if (toys.length === 0) return ['all connected toys'];
   return toys.map((toy) => ({
     id: toy.id,
-    name: toy.nickname || toy.name || toy.toyType || 'Lovense toy'
+    name: toyLabel(toy)
   }));
 }
 
