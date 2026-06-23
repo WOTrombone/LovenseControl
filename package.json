@@ -1,6 +1,6 @@
 {
   "name": "lovensecontrol",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Mobile-first consent and safety router for Lovense toy control.",
   "type": "module",

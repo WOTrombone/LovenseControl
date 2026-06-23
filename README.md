@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.7: a first controller-routing spike.
+This is v0.8: a first controller-routing and per-toy test spike.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -15,13 +15,13 @@ This is v0.7: a first controller-routing spike.
 - Token requests now fail with visible timeout errors instead of hanging.
 - The top of the page now shows host-facing status cards and safety controls.
 - `STOP ALL` is visible as soon as the SDK session exists.
-- `Test All 1/20` stays disabled until a toy is detected online, then sends a low test command to every connected toy.
+- Host safety testing now has an intensity slider, `Test All`, and per-toy `Test This Toy` buttons.
 - Diagnostics are tucked behind a collapsible panel.
 - The host can create an in-memory controller room and copy a controller invite link.
 - `/controller.html` lets a controller request access, wait for host approval, and send held intensity requests.
 - Controller requests are routed through the host page, where the host's routing toggle, intensity cap, and STOP ALL remain in control.
 
-Routing currently applies allowed controller intensity to all connected toys. Per-toy assignment comes next.
+Routing currently applies allowed controller intensity to all connected toys. Per-toy assignment and repeating pattern controls come next.
 
 ## Local Setup
 
@@ -62,4 +62,5 @@ https://your-render-service.onrender.com/lovense/callback
 4. Scan the QR code in Lovense Remote.
 5. Confirm toy connection/callback behavior.
 6. Create a controller room and approve a controller.
-7. Test controller requests with the host cap low, then add per-toy assignment.
+7. Test controller requests with the host cap low.
+8. Add per-toy assignment and a repeatable pattern editor with STOP ALL as the hard override.

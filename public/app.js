@@ -9,6 +9,8 @@ const toyStatus = document.querySelector('#toy-status');
 const toyList = document.querySelector('#toy-list');
 const refreshStateButton = document.querySelector('#refresh-state');
 const testVibrateButton = document.querySelector('#test-vibrate');
+const testIntensity = document.querySelector('#test-intensity');
+const testIntensityOutput = document.querySelector('#test-intensity-output');
 const stopToysButton = document.querySelector('#stop-toys');
 const controllerLink = document.querySelector('#controller-link');
 const createRoomButton = document.querySelector('#create-room');
@@ -36,7 +38,11 @@ document.querySelector('#host-form').addEventListener('submit', createHostSessio
 document.querySelector('#check-app-status').addEventListener('click', checkAppStatus);
 document.querySelector('#get-toys').addEventListener('click', getToys);
 refreshStateButton.addEventListener('click', refreshSdkState);
-testVibrateButton.addEventListener('click', testVibrate);
+testVibrateButton.addEventListener('click', testVibrateAll);
+testIntensity.addEventListener('input', () => {
+  testIntensityOutput.textContent = `${clampIntensity(testIntensity.value)} / 20`;
+});
+toyList.addEventListener('click', handleToyListClick);
 stopToysButton.addEventListener('click', stopToys);
 createRoomButton.addEventListener('click', createRoom);
 controllersList.addEventListener('click', handleControllerAction);
@@ -465,7 +471,13 @@ async function applyControllerIntent() {
   }
 }
 
-async function testVibrate() {
+async function handleToyListClick(event) {
+  const button = event.target.closest('button[data-test-toy-id]');
+  if (!button) return;
+  await testVibrateToy(button.dataset.testToyId);
+}
+
+async function testVibrateAll() {
   if (!currentSdk) {
     logSdkEvent('testVibrateError', 'Create a Lovense session first.');
     return;
@@ -478,13 +490,10 @@ async function testVibrate() {
 
   try {
     const targets = connectedToys();
-    const command = {
-      vibrate: 1,
-      time: 2
-    };
+    const command = testCommand();
 
     const result = await currentSdk.sendToyCommand(command);
-    logSdkEvent('testVibrateAll1of20', {
+    logSdkEvent('testVibrateAll', {
       command,
       targets: summarizeToyTargets(targets),
       result: result || 'sent'
@@ -492,6 +501,41 @@ async function testVibrate() {
   } catch (error) {
     logSdkEvent('testVibrateError', errorToText(error));
   }
+}
+
+async function testVibrateToy(toyId) {
+  if (!currentSdk) {
+    logSdkEvent('testVibrateError', 'Create a Lovense session first.');
+    return;
+  }
+
+  const toy = state.toys.find((candidate) => candidate.id === toyId);
+  if (!toy?.connected) {
+    logSdkEvent('testVibrateBlocked', 'That toy is not online.');
+    return;
+  }
+
+  try {
+    const command = {
+      ...testCommand(),
+      toyId
+    };
+    const result = await currentSdk.sendToyCommand(command);
+    logSdkEvent('testVibrateToy', {
+      command,
+      target: summarizeToyTargets([toy])[0],
+      result: result || 'sent'
+    });
+  } catch (error) {
+    logSdkEvent('testVibrateError', errorToText(error));
+  }
+}
+
+function testCommand() {
+  return {
+    vibrate: clampIntensity(testIntensity.value),
+    time: 2
+  };
 }
 
 async function getJsonText(url) {
@@ -568,6 +612,9 @@ function renderToy(toy) {
   const item = document.createElement('div');
   item.className = 'toy-item';
 
+  const info = document.createElement('div');
+  info.className = 'toy-info';
+
   const name = document.createElement('strong');
   name.textContent = toy.nickname || toy.name || toy.toyType || 'Lovense toy';
 
@@ -578,7 +625,19 @@ function renderToy(toy) {
     toy.id ? `id ${toy.id}` : null
   ].filter(Boolean).join(' · ');
 
-  item.append(name, details);
+  info.append(name, details);
+
+  const actions = document.createElement('div');
+  actions.className = 'button-row';
+
+  const test = document.createElement('button');
+  test.type = 'button';
+  test.textContent = 'Test This Toy';
+  test.disabled = !toy.connected || !toy.id;
+  test.dataset.testToyId = toy.id;
+
+  actions.append(test);
+  item.append(info, actions);
   return item;
 }
 

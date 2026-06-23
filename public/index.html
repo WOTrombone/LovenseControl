@@ -11,7 +11,7 @@
 <body>
   <main class="app-shell">
     <section class="hero">
-      <p class="eyebrow">LovenseControl v0.7</p>
+      <p class="eyebrow">LovenseControl v0.8</p>
       <h1>Host dashboard.</h1>
       <p>
         The host connects Lovense Remote, confirms toy status, and keeps safety controls in their hands.
@@ -93,13 +93,18 @@
         <h2 id="safety-heading">Safety</h2>
         <div class="button-row">
           <button id="refresh-state" type="button">Refresh State</button>
-          <button id="test-vibrate" type="button" disabled>Test All 1/20</button>
+          <button id="test-vibrate" type="button" disabled>Test All</button>
           <button id="stop-toys" class="danger-button" type="button" disabled>STOP ALL</button>
         </div>
       </div>
       <p class="hint">
-        STOP ALL is the first control to prove. Test All sends 1/20 to every connected toy.
+        STOP ALL stays first. Use the slider for short manual tests, then test every connected toy or one toy at a time.
       </p>
+      <label class="test-slider">
+        Test intensity
+        <input id="test-intensity" type="range" min="0" max="20" value="1">
+      </label>
+      <output id="test-intensity-output" class="compact-output">1 / 20</output>
       <div id="toy-list" class="toy-list">No toys found yet.</div>
     </section>
 

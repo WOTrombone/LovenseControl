@@ -195,6 +195,11 @@ output {
   font-weight: 800;
 }
 
+.compact-output {
+  margin-bottom: 12px;
+  font-size: 1.35rem;
+}
+
 .controller-actions {
   justify-content: stretch;
 }
@@ -342,12 +347,19 @@ button:disabled {
 }
 
 .toy-item {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px;
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   background: #0d0f12;
+}
+
+.toy-info {
+  display: grid;
+  gap: 3px;
 }
 
 .toy-item strong {
@@ -404,6 +416,11 @@ pre {
   }
 
   .controller-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .toy-item {
     align-items: flex-start;
     flex-direction: column;
   }
