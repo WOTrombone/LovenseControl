@@ -67,6 +67,42 @@ h1 {
   background: var(--panel);
 }
 
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.status-card {
+  padding: 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.status-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.status-card strong {
+  font-size: 1.2rem;
+}
+
+.good {
+  color: #69e69b;
+}
+
+.warn {
+  color: #ffd166;
+}
+
 .panel-heading {
   display: flex;
   align-items: center;
@@ -127,6 +163,19 @@ button:hover {
   background: var(--accent-strong);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.danger-button {
+  background: #e03131;
+}
+
+.danger-button:hover {
+  background: #ff4545;
+}
+
 .button-row button {
   min-height: 36px;
   padding: 0 12px;
@@ -136,6 +185,29 @@ button:hover {
   margin: 12px 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.safety-panel {
+  border-color: #5b252a;
+}
+
+.toy-list {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.toy-item {
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: #0d0f12;
+}
+
+.toy-item strong {
+  color: var(--text);
 }
 
 pre {
@@ -161,6 +233,10 @@ pre {
 }
 
 @media (max-width: 760px) {
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+
   form {
     grid-template-columns: 1fr;
   }

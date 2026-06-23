@@ -3,22 +3,53 @@ const tokenOutput = document.querySelector('#token-output');
 const callbackOutput = document.querySelector('#callback-output');
 const qrOutput = document.querySelector('#qr-output');
 const sdkOutput = document.querySelector('#sdk-output');
+const backendStatus = document.querySelector('#backend-status');
+const appStatus = document.querySelector('#app-status');
+const toyStatus = document.querySelector('#toy-status');
+const toyList = document.querySelector('#toy-list');
+const refreshStateButton = document.querySelector('#refresh-state');
+const testVibrateButton = document.querySelector('#test-vibrate');
+const stopToysButton = document.querySelector('#stop-toys');
 const sdkEvents = [];
 let currentSdk;
+let state = {
+  backendOk: false,
+  appConnected: false,
+  toyOnline: false,
+  toys: [],
+  deviceInfo: null
+};
 
 document.querySelector('#check-health').addEventListener('click', checkHealth);
 document.querySelector('#refresh-callbacks').addEventListener('click', loadCallbacks);
 document.querySelector('#host-form').addEventListener('submit', createHostSession);
 document.querySelector('#check-app-status').addEventListener('click', checkAppStatus);
 document.querySelector('#get-toys').addEventListener('click', getToys);
-document.querySelector('#stop-toys').addEventListener('click', stopToys);
+refreshStateButton.addEventListener('click', refreshSdkState);
+testVibrateButton.addEventListener('click', testVibrate);
+stopToysButton.addEventListener('click', stopToys);
 
 checkHealth();
 loadCallbacks();
+renderHostState();
 
 async function checkHealth() {
   healthOutput.textContent = 'Checking...';
-  healthOutput.textContent = await getJsonText('/health');
+  try {
+    const data = await getJson('/health');
+    state = {
+      ...state,
+      backendOk: Boolean(data.ok)
+    };
+    healthOutput.textContent = JSON.stringify(data, null, 2);
+  } catch (error) {
+    state = {
+      ...state,
+      backendOk: false
+    };
+    healthOutput.textContent = errorToText(error);
+  }
+  renderHostState();
 }
 
 async function loadCallbacks() {
@@ -33,6 +64,14 @@ async function createHostSession(event) {
   qrOutput.replaceChildren();
   sdkEvents.length = 0;
   currentSdk = undefined;
+  state = {
+    ...state,
+    appConnected: false,
+    toyOnline: false,
+    toys: [],
+    deviceInfo: null
+  };
+  renderHostState();
 
   const formData = new FormData(event.currentTarget);
   const payload = {
@@ -80,6 +119,7 @@ async function renderLovenseQr({ uid, platform, authToken }) {
 
   const sdk = new window.LovenseBasicSdk({ uid, platform, authToken, debug: true });
   currentSdk = sdk;
+  renderHostState();
 
   sdk.on('ready', async (instance) => {
     currentSdk = instance;
@@ -111,18 +151,40 @@ async function renderLovenseQr({ uid, platform, authToken }) {
   });
 
   sdk.on('appStatusChange', (data) => {
+    state = {
+      ...state,
+      appConnected: Boolean(data)
+    };
+    renderHostState();
     logSdkEvent('appStatusChange', data);
   });
 
   sdk.on('toyInfoChange', (data) => {
+    state = {
+      ...state,
+      toys: normalizeToyList(data),
+      toyOnline: normalizeToyList(data).some((toy) => toy.connected)
+    };
+    renderHostState();
     logSdkEvent('toyInfoChange', data);
   });
 
   sdk.on('toyOnlineChange', (data) => {
+    state = {
+      ...state,
+      toyOnline: Boolean(data)
+    };
+    renderHostState();
     logSdkEvent('toyOnlineChange', data);
   });
 
   sdk.on('deviceInfoChange', (data) => {
+    state = {
+      ...state,
+      appConnected: true,
+      deviceInfo: data
+    };
+    renderHostState();
     logSdkEvent('deviceInfoChange', data);
   });
 }
@@ -135,6 +197,11 @@ async function checkAppStatus() {
 
   try {
     const status = await currentSdk.getAppStatus();
+    state = {
+      ...state,
+      appConnected: Boolean(status)
+    };
+    renderHostState();
     logSdkEvent('getAppStatus', status);
   } catch (error) {
     logSdkEvent('getAppStatusError', errorToText(error));
@@ -150,10 +217,22 @@ async function getToys() {
   try {
     const onlineToys = await currentSdk.getOnlineToys();
     const toys = await currentSdk.getToys();
+    const normalizedToys = normalizeToyList(toys);
+    state = {
+      ...state,
+      toys: normalizedToys,
+      toyOnline: normalizeToyList(onlineToys).length > 0 || normalizedToys.some((toy) => toy.connected)
+    };
+    renderHostState();
     logSdkEvent('getToys', { onlineToys, toys });
   } catch (error) {
     logSdkEvent('getToysError', errorToText(error));
   }
+}
+
+async function refreshSdkState() {
+  await checkAppStatus();
+  await getToys();
 }
 
 async function stopToys() {
@@ -165,19 +244,50 @@ async function stopToys() {
   try {
     const result = await currentSdk.stopToyAction();
     logSdkEvent('stopToyAction', result || 'sent');
+    await getToys();
   } catch (error) {
     logSdkEvent('stopError', errorToText(error));
   }
 }
 
+async function testVibrate() {
+  if (!currentSdk) {
+    logSdkEvent('testVibrateError', 'Create a Lovense session first.');
+    return;
+  }
+
+  if (!state.toyOnline) {
+    logSdkEvent('testVibrateBlocked', 'No online toy detected.');
+    return;
+  }
+
+  try {
+    const firstToy = state.toys.find((toy) => toy.connected) || state.toys[0];
+    const command = {
+      vibrate: 1,
+      time: 2
+    };
+    if (firstToy?.id) command.toyId = firstToy.id;
+
+    const result = await currentSdk.sendToyCommand(command);
+    logSdkEvent('testVibrate1of20', result || command);
+  } catch (error) {
+    logSdkEvent('testVibrateError', errorToText(error));
+  }
+}
+
 async function getJsonText(url) {
   try {
-    const response = await fetchWithTimeout(url, {}, 10000);
-    const data = await response.json();
+    const data = await getJson(url);
     return JSON.stringify(data, null, 2);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
+}
+
+async function getJson(url) {
+  const response = await fetchWithTimeout(url, {}, 10000);
+  return response.json();
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
@@ -211,4 +321,58 @@ function logSdkEvent(type, data = null) {
 
 function errorToText(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function renderHostState() {
+  backendStatus.textContent = state.backendOk ? 'Online' : 'Not checked';
+  backendStatus.className = state.backendOk ? 'good' : 'warn';
+
+  appStatus.textContent = state.appConnected ? 'Connected' : 'Not connected';
+  appStatus.className = state.appConnected ? 'good' : 'warn';
+
+  toyStatus.textContent = state.toyOnline ? 'Online' : 'No toy detected';
+  toyStatus.className = state.toyOnline ? 'good' : 'warn';
+
+  stopToysButton.disabled = !currentSdk;
+  testVibrateButton.disabled = !currentSdk || !state.toyOnline;
+
+  if (state.toys.length === 0) {
+    toyList.textContent = state.appConnected
+      ? 'Lovense Remote is connected. No online toys detected yet.'
+      : 'Connect Lovense Remote to check toys.';
+    return;
+  }
+
+  toyList.replaceChildren(...state.toys.map(renderToy));
+}
+
+function renderToy(toy) {
+  const item = document.createElement('div');
+  item.className = 'toy-item';
+
+  const name = document.createElement('strong');
+  name.textContent = toy.nickname || toy.name || toy.toyType || 'Lovense toy';
+
+  const details = document.createElement('span');
+  details.textContent = [
+    toy.connected ? 'online' : 'offline',
+    toy.battery === undefined ? null : `${toy.battery}% battery`,
+    toy.id ? `id ${toy.id}` : null
+  ].filter(Boolean).join(' · ');
+
+  item.append(name, details);
+  return item;
+}
+
+function normalizeToyList(value) {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : Object.values(value);
+  return list.filter(Boolean).map((toy) => ({
+    id: toy.id || toy.toyId || '',
+    name: toy.name || '',
+    toyType: toy.toyType || toy.type || '',
+    nickname: toy.nickname || toy.nickName || '',
+    battery: toy.battery,
+    connected: toy.connected === undefined ? toy.status === 1 || toy.status === '1' : Boolean(toy.connected)
+  }));
 }

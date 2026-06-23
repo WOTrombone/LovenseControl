@@ -6,13 +6,16 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.3: a connection spike.
+This is v0.4: a host-dashboard spike.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
 - `POST /lovense/callback` accepts Lovense Standard API callback payloads for early testing.
 - The browser page can request a host session, ask the Lovense Standard JS SDK for a QR code, show SDK events, request app/toy status, and send a stop command.
 - Token requests now fail with visible timeout errors instead of hanging.
+- The top of the page now shows host-facing status cards and safety controls.
+- `STOP ALL` is visible as soon as the SDK session exists.
+- `Test 1/20` stays disabled until a toy is detected online.
 
 No real controller routing is implemented yet.
 
