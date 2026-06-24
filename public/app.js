@@ -17,6 +17,7 @@ const createRoomButton = document.querySelector('#create-room');
 const controllersList = document.querySelector('#controllers-list');
 const intensityCap = document.querySelector('#intensity-cap');
 const routingEnabled = document.querySelector('#routing-enabled');
+const savedRoomKey = 'lovensecontrol.hostRoomId';
 const sdkEvents = [];
 let currentSdk;
 let roomPollTimer;
@@ -60,6 +61,7 @@ routingEnabled.addEventListener('change', () => {
 checkHealth();
 loadCallbacks();
 renderHostState();
+restoreSavedRoom();
 
 async function checkHealth() {
   healthOutput.textContent = 'Checking...';
@@ -137,6 +139,66 @@ async function createHostSession(event) {
     tokenOutput.textContent = error instanceof Error ? error.message : String(error);
     logSdkEvent('tokenRequestError', errorToText(error));
   }
+}
+
+async function restoreSavedRoom() {
+  const roomId = cleanId(localStorage.getItem(savedRoomKey));
+  if (!roomId) return;
+
+  tokenOutput.textContent = `Restoring room ${roomId}...`;
+  controllerLink.value = 'Restoring saved room...';
+
+  try {
+    const response = await fetchWithTimeout(`/api/rooms/${roomId}`, {}, 5000);
+    const room = await response.json();
+
+    if (!response.ok) {
+      clearSavedRoom();
+      showExpiredRoom(roomId);
+      return;
+    }
+
+    await updateRoomState(room);
+    setControllerInvite(room.id);
+    startRoomPolling();
+    tokenOutput.textContent = JSON.stringify({
+      restoredRoom: room.id,
+      socketStatus: room.lovense?.socketStatus || 'not connected',
+      hasQrCode: Boolean(room.lovense?.qrcode?.qrcodeUrl),
+      message: room.lovense?.qrcode?.qrcodeUrl
+        ? 'Restored saved room and QR state.'
+        : 'Restored saved room. Reconnect Lovense Session if QR/socket state is missing.'
+    }, null, 2);
+    logSdkEvent('roomRestored', {
+      room: room.id,
+      socketStatus: room.lovense?.socketStatus || 'not connected',
+      hasQrCode: Boolean(room.lovense?.qrcode?.qrcodeUrl)
+    });
+  } catch (error) {
+    clearSavedRoom();
+    showExpiredRoom(roomId, errorToText(error));
+  }
+}
+
+function showExpiredRoom(roomId, detail = '') {
+  state = {
+    ...state,
+    room: null,
+    appConnected: false,
+    toyOnline: false,
+    toys: [],
+    deviceInfo: null
+  };
+  controllerLink.value = 'Saved room expired. Create a room again.';
+  controllersList.textContent = 'Saved room expired. Create a new room or Lovense session.';
+  tokenOutput.textContent = JSON.stringify({
+    expiredRoom: roomId,
+    message: 'Render no longer has this in-memory room. Create a new Lovense session.',
+    detail: detail || null
+  }, null, 2);
+  qrOutput.hidden = false;
+  qrOutput.textContent = 'Saved room expired. Click Create Lovense Session to make a new room and QR.';
+  renderHostState();
 }
 
 async function renderLovenseQr({ uid, platform, authToken }) {
@@ -249,7 +311,9 @@ function renderBackendLovenseQr(lovense) {
     route: 'backend-socket',
     socketStatus: lovense.socketStatus,
     socketError: lovense.socketError || null,
-    message: 'Waiting for QR code from Lovense socket...'
+    message: lovense.socketStatus === 'not connected'
+      ? 'No backend Lovense session exists for this room yet. Click Create Lovense Session.'
+      : 'Waiting for QR code from Lovense socket...'
   }, null, 2);
 }
 
@@ -323,7 +387,6 @@ async function stopToys() {
   }
 
   routingGeneration += 1;
-  routingEnabled.checked = false;
   markAllGesturesSeen();
   lastToyCommands.clear();
   clearLocalControllerActivity();
@@ -383,14 +446,27 @@ async function ensureRoom(hostName, forceNew = false) {
     ...state,
     room
   };
-  const url = new URL('/controller.html', window.location.origin);
-  url.searchParams.set('room', room.id);
-  url.searchParams.set('name', 'Controller');
-  controllerLink.value = url.toString();
+  saveRoom(room.id);
+  setControllerInvite(room.id);
   renderControllers();
   startRoomPolling();
   updateRoomSafety();
   return room;
+}
+
+function setControllerInvite(roomId) {
+  const url = new URL('/controller.html', window.location.origin);
+  url.searchParams.set('room', roomId);
+  url.searchParams.set('name', 'Controller');
+  controllerLink.value = url.toString();
+}
+
+function saveRoom(roomId) {
+  if (roomId) localStorage.setItem(savedRoomKey, roomId);
+}
+
+function clearSavedRoom() {
+  localStorage.removeItem(savedRoomKey);
 }
 
 function startRoomPolling() {
@@ -454,6 +530,8 @@ async function updateRoomState(room) {
     ...state,
     room
   };
+  saveRoom(room.id);
+  setControllerInvite(room.id);
   syncRoomSafetyControls(room);
   syncLovenseRoomState(room);
   renderControllers();

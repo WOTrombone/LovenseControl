@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.18: backend-socket responsiveness spike.
+This is v0.18.2: backend-socket responsiveness and host-session recovery stabilization.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -27,7 +27,7 @@ This is v0.18: backend-socket responsiveness spike.
 - Host and controller pages receive room updates over WebSocket instead of relying on the old 250ms host polling loop.
 - Routed live vibration commands use indefinite `time: 0` commands instead of two-second command windows.
 - When Lovense Remote reports a LAN endpoint, routed vibration prefers the local `https://{domain}:{httpsPort}/command` API and falls back to the Standard JS SDK if LAN fails.
-- `STOP ALL` clears the room's controller queues, disables live routing, and sends a parallel hard-stop burst over both LAN and the Standard JS SDK.
+- `STOP ALL` clears the room's controller queues and sends a parallel hard-stop burst over both LAN and the Standard JS SDK when the browser fallback is active.
 - Controller stop/inactive requests clear any stale live samples on the server.
 - The host can assign each controller to a detected toy.
 - Controllers can see which toy the host assigned to them.
@@ -35,6 +35,9 @@ This is v0.18: backend-socket responsiveness spike.
 - Backend socket routing respects the host's live-routing toggle and intensity cap.
 - The old browser SDK/LAN routing code remains in place as a fallback path while the backend socket path is tested.
 - `STOP ALL` clears controller intents and sends backend socket stop/zero commands immediately.
+- `STOP ALL` no longer disables live routing; the host can use the live-routing checkbox as the separate pause/resume control.
+- The host page remembers the current room in browser storage and restores QR/socket/toy/controller state after back/refresh if the backend room still exists.
+- If Render lost the in-memory room, the host page now reports that the saved room expired instead of showing a misleading empty room.
 
 The next decision is whether the backend Socket API path is responsive enough to become the only live routing path.
 
@@ -48,7 +51,7 @@ npm run dev
 
 Set `LOVENSE_DEVELOPER_TOKEN` in `.env` locally or in Render environment variables when deployed.
 
-The v0.18 backend socket path requires `socket.io-client` 2.x because Lovense's Standard Socket API requires the 2.x Socket.IO client.
+The v0.18.x backend socket path requires `socket.io-client` 2.x because Lovense's Standard Socket API requires the 2.x Socket.IO client.
 
 Do not commit `.env`, Lovense developer tokens, AES keys, Render secrets, or GitHub tokens.
 

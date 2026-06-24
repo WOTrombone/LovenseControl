@@ -29,7 +29,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.18.0',
+        version: '0.18.2',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform,
         backendSocketRouting: true
@@ -201,7 +201,6 @@ async function handleRoomRoute(req, res, url) {
 
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'stop') {
     stopRoomControllerIntents(room);
-    room.safety.routingEnabled = false;
     sendHardStopFromRoom(room, 'room-stop');
     broadcastRoom(room);
     return sendJson(res, 200, serializeRoom(room));
@@ -520,6 +519,23 @@ async function connectRoomLovenseSocket(room, session) {
   });
 
   socket.on('connect_error', (error) => {
+    room.lovense.socketStatus = 'error';
+    room.lovense.socketError = errorToText(error);
+    broadcastRoom(room);
+  });
+
+  socket.on('connect_timeout', () => {
+    room.lovense.socketStatus = 'error';
+    room.lovense.socketError = 'Timed out connecting to Lovense socket.';
+    broadcastRoom(room);
+  });
+
+  socket.on('reconnect_attempt', () => {
+    room.lovense.socketStatus = 'reconnecting';
+    broadcastRoom(room);
+  });
+
+  socket.on('reconnect_error', (error) => {
     room.lovense.socketStatus = 'error';
     room.lovense.socketError = errorToText(error);
     broadcastRoom(room);

@@ -130,6 +130,13 @@ function renderController(controller) {
   revoked = Boolean(controller.revoked);
   const toyName = cleanName(controller.assignedToyName) || cleanId(controller.assignedToyId);
   const hasAssignedToy = Boolean(controller.assignedToyId);
+  const intentActive = Boolean(controller.intent?.active);
+
+  if (!intentActive && clampIntensity(intensity.value) !== 0) {
+    intensity.value = '0';
+    pendingLevel = null;
+    renderIntensity();
+  }
 
   assignedToy.textContent = toyName || 'Not assigned yet';
   assignedToyNote.textContent = hasAssignedToy
