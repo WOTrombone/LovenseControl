@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.19.0: per-toy safety caps and toy labels.
+This is v0.19.1: per-toy safety caps, toy labels, and room creation stabilization.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -43,6 +43,7 @@ This is v0.19.0: per-toy safety caps and toy labels.
 - The host page remembers the current room in browser storage and restores QR/socket/toy/controller state after back/refresh if the backend room still exists.
 - The host page also writes the active room into the URL as `?room=...`, so refresh/back restores the exact same room instead of drifting to a different saved room.
 - If Render lost the in-memory room, the host page now reports that the saved room expired instead of showing a misleading empty room.
+- Create / Restore Room reuses the current/recovered room instead of creating a fresh room that has no Lovense session.
 
 The next decision is whether to build pattern functionality now or do another small v0.19 stabilization pass after per-toy cap testing.
 

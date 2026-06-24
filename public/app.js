@@ -414,12 +414,16 @@ async function stopToys() {
 
 async function createRoom() {
   createRoomButton.disabled = true;
-  createRoomButton.textContent = 'Creating...';
+  createRoomButton.textContent = state.room?.id ? 'Restoring...' : 'Creating...';
 
   try {
+    await restoreRoomPromise;
     const hostName = document.querySelector('[name="uname"]').value || 'Host';
-    const room = await ensureRoom(hostName, true);
-    logSdkEvent('roomCreated', { room: room.id });
+    const room = await ensureRoom(hostName, false);
+    logSdkEvent('roomReady', {
+      room: room.id,
+      socketStatus: room.lovense?.socketStatus || 'not connected'
+    });
     renderControllers();
     startRoomPolling();
   } catch (error) {
@@ -427,7 +431,7 @@ async function createRoom() {
     logSdkEvent('roomCreateError', errorToText(error));
   } finally {
     createRoomButton.disabled = false;
-    createRoomButton.textContent = 'Create Room';
+    createRoomButton.textContent = 'Create / Restore Room';
   }
 }
 
