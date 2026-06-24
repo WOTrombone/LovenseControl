@@ -61,7 +61,7 @@ routingEnabled.addEventListener('change', () => {
 checkHealth();
 loadCallbacks();
 renderHostState();
-restoreSavedRoom();
+const restoreRoomPromise = restoreSavedRoom();
 
 async function checkHealth() {
   healthOutput.textContent = 'Checking...';
@@ -111,6 +111,7 @@ async function createHostSession(event) {
   logSdkEvent('hostSessionRequested', payload);
 
   try {
+    await restoreRoomPromise;
     const room = await ensureRoom(payload.uname || 'Host');
     const response = await fetchWithTimeout(`/api/rooms/${room.id}/lovense/session`, {
       method: 'POST',
@@ -142,7 +143,7 @@ async function createHostSession(event) {
 }
 
 async function restoreSavedRoom() {
-  const roomId = cleanId(localStorage.getItem(savedRoomKey));
+  const roomId = currentHostRoomId();
   if (!roomId) return;
 
   tokenOutput.textContent = `Restoring room ${roomId}...`;
@@ -160,6 +161,7 @@ async function restoreSavedRoom() {
 
     await updateRoomState(room);
     setControllerInvite(room.id);
+    setHostRoomUrl(room.id);
     startRoomPolling();
     tokenOutput.textContent = JSON.stringify({
       restoredRoom: room.id,
@@ -447,6 +449,7 @@ async function ensureRoom(hostName, forceNew = false) {
     room
   };
   saveRoom(room.id);
+  setHostRoomUrl(room.id);
   setControllerInvite(room.id);
   renderControllers();
   startRoomPolling();
@@ -461,12 +464,35 @@ function setControllerInvite(roomId) {
   controllerLink.value = url.toString();
 }
 
+function setHostRoomUrl(roomId) {
+  if (!roomId || !window.history?.replaceState) return;
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('room', roomId);
+  window.history.replaceState({}, '', url);
+}
+
+function currentHostRoomId() {
+  const urlRoom = cleanId(new URLSearchParams(window.location.search).get('room'));
+  if (urlRoom) {
+    localStorage.setItem(savedRoomKey, urlRoom);
+    return urlRoom;
+  }
+
+  return cleanId(localStorage.getItem(savedRoomKey));
+}
+
 function saveRoom(roomId) {
   if (roomId) localStorage.setItem(savedRoomKey, roomId);
 }
 
 function clearSavedRoom() {
   localStorage.removeItem(savedRoomKey);
+  if (window.history?.replaceState) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.replaceState({}, '', url);
+  }
 }
 
 function startRoomPolling() {
@@ -531,6 +557,7 @@ async function updateRoomState(room) {
     room
   };
   saveRoom(room.id);
+  setHostRoomUrl(room.id);
   setControllerInvite(room.id);
   syncRoomSafetyControls(room);
   syncLovenseRoomState(room);

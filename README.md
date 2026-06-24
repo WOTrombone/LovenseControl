@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.18.2: backend-socket responsiveness and host-session recovery stabilization.
+This is v0.18.3: backend-socket responsiveness and host-room URL recovery stabilization.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -37,6 +37,7 @@ This is v0.18.2: backend-socket responsiveness and host-session recovery stabili
 - `STOP ALL` clears controller intents and sends backend socket stop/zero commands immediately.
 - `STOP ALL` no longer disables live routing; the host can use the live-routing checkbox as the separate pause/resume control.
 - The host page remembers the current room in browser storage and restores QR/socket/toy/controller state after back/refresh if the backend room still exists.
+- The host page also writes the active room into the URL as `?room=...`, so refresh/back restores the exact same room instead of drifting to a different saved room.
 - If Render lost the in-memory room, the host page now reports that the saved room expired instead of showing a misleading empty room.
 
 The next decision is whether the backend Socket API path is responsive enough to become the only live routing path.
