@@ -14,13 +14,18 @@ const requestButton = document.querySelector('#request-access');
 const intensity = document.querySelector('#intensity');
 const intensityOutput = document.querySelector('#intensity-output');
 const releaseStop = document.querySelector('#release-stop');
+const liveMode = document.querySelector('#live-mode');
+const pulseMode = document.querySelector('#pulse-mode');
+const chaosMode = document.querySelector('#chaos-mode');
 
 let controllerId = '';
 let pollTimer;
 let sendTimer;
+let gestureQueue = [];
 let approved = false;
 let revoked = false;
 let controlsEnabled = false;
+let controlMode = 'level';
 
 nameInput.value = defaultName;
 title.textContent = defaultName;
@@ -33,9 +38,12 @@ nameInput.addEventListener('input', () => {
 requestButton.addEventListener('click', requestAccess);
 intensity.addEventListener('input', () => {
   renderIntensity();
-  scheduleSendCurrentLevel();
+  queueGestureSample();
 });
 releaseStop.addEventListener('click', stopSending);
+liveMode.addEventListener('click', useLiveMode);
+pulseMode.addEventListener('click', usePulseMode);
+chaosMode.addEventListener('click', useChaosMode);
 
 renderState();
 
@@ -113,7 +121,7 @@ function renderController(controller) {
     statusText.className = hasAssignedToy ? 'status-pill good' : 'status-pill warn';
     roomLabel.textContent = hasAssignedToy ? 'Controlling' : 'Waiting';
     note.textContent = hasAssignedToy
-      ? 'Move the slider to send a level. Set it to 0 or press Stop to stop.'
+      ? 'Move the slider for a steady level, or use Pulse for an alternating pattern.'
       : 'Waiting for the host to assign a toy.';
     joinPanel.hidden = true;
     setControlEnabled(hasAssignedToy);
@@ -141,26 +149,83 @@ function renderState() {
   }
 }
 
-function scheduleSendCurrentLevel() {
+function queueGestureSample() {
   if (!controlsEnabled) return;
-  if (sendTimer) clearTimeout(sendTimer);
-  sendTimer = setTimeout(sendCurrentLevel, 150);
+  controlMode = 'level';
+  renderMode();
+  gestureQueue.push({
+    intensity: Number(intensity.value || 0),
+    sentAt: new Date().toISOString()
+  });
+  gestureQueue = gestureQueue.slice(-80);
+
+  if (!sendTimer) {
+    sendTimer = setTimeout(flushGestureQueue, 90);
+  }
 }
 
 async function sendCurrentLevel() {
   if (!controlsEnabled) return;
-  await sendIntent(Number(intensity.value || 0) > 0);
+  controlMode = 'level';
+  renderMode();
+  queueGestureSample();
+  await flushGestureQueue();
 }
 
 async function stopSending() {
   if (!approved && !controlsEnabled) return;
   if (sendTimer) clearTimeout(sendTimer);
+  sendTimer = undefined;
+  controlMode = 'level';
   intensity.value = '0';
   renderIntensity();
-  await sendIntent(false);
+  renderMode();
+  gestureQueue.push({
+    intensity: 0,
+    sentAt: new Date().toISOString()
+  });
+  await flushGestureQueue();
+  await sendIntent(false, {
+    mode: 'level'
+  });
 }
 
-async function sendIntent(active) {
+async function useLiveMode() {
+  if (!controlsEnabled) return;
+  controlMode = 'level';
+  renderMode();
+  await sendCurrentLevel();
+}
+
+async function usePulseMode() {
+  if (!controlsEnabled) return;
+  if (sendTimer) clearTimeout(sendTimer);
+  controlMode = 'pattern';
+  renderMode();
+  await sendIntent(true, {
+    mode: 'pattern',
+    pattern: {
+      strength: '20;0;20;0',
+      interval: 250
+    }
+  });
+}
+
+async function useChaosMode() {
+  if (!controlsEnabled) return;
+  if (sendTimer) clearTimeout(sendTimer);
+  controlMode = 'chaos';
+  renderMode();
+  await sendIntent(true, {
+    mode: 'pattern',
+    pattern: {
+      strength: '20;0;16;20;4;0;20;9;18;0;13;20;0;7;20;3',
+      interval: 140
+    }
+  });
+}
+
+async function sendIntent(active, options = {}) {
   if (!roomId || !controllerId) return;
 
   try {
@@ -169,7 +234,9 @@ async function sendIntent(active) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         active,
-        intensity: active ? Number(intensity.value || 0) : 0
+        mode: options.mode || controlMode,
+        intensity: active ? Number(intensity.value || 0) : 0,
+        pattern: options.pattern || null
       })
     }, 10000);
   } catch (error) {
@@ -178,15 +245,50 @@ async function sendIntent(active) {
   }
 }
 
+async function flushGestureQueue() {
+  if (sendTimer) {
+    clearTimeout(sendTimer);
+    sendTimer = undefined;
+  }
+  if (!controlsEnabled || !roomId || !controllerId || gestureQueue.length === 0) return;
+
+  const samples = gestureQueue.splice(0, 30);
+
+  try {
+    await fetchWithTimeout(`/api/rooms/${roomId}/controllers/${controllerId}/gesture`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ samples })
+    }, 10000);
+  } catch (error) {
+    gestureQueue = samples.concat(gestureQueue).slice(-80);
+    statusText.textContent = 'Send failed';
+    note.textContent = errorToText(error);
+  }
+}
+
 function setControlEnabled(enabled) {
   controlsEnabled = enabled;
-  if (!enabled && sendTimer) clearTimeout(sendTimer);
+  if (!enabled && sendTimer) {
+    clearTimeout(sendTimer);
+    sendTimer = undefined;
+  }
   intensity.disabled = !enabled;
   releaseStop.disabled = !enabled;
+  liveMode.disabled = !enabled;
+  pulseMode.disabled = !enabled;
+  chaosMode.disabled = !enabled;
+  renderMode();
 }
 
 function renderIntensity() {
   intensityOutput.textContent = `${intensity.value} / 20`;
+}
+
+function renderMode() {
+  liveMode.classList.toggle('active', controlMode === 'level');
+  pulseMode.classList.toggle('active', controlMode === 'pattern');
+  chaosMode.classList.toggle('active', controlMode === 'chaos');
 }
 
 async function getJson(url) {

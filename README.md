@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.13: controller-visible assignment with a mobile control-room layout.
+This is v0.14: controller-visible assignment with gesture replay.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -19,6 +19,7 @@ This is v0.13: controller-visible assignment with a mobile control-room layout.
 - Diagnostics are tucked behind a collapsible panel.
 - The host can create an in-memory controller room and copy a controller invite link.
 - `/controller.html` lets a controller request access, wait for host approval, see the assigned toy, and use a mobile control-room style vertical live intensity slider.
+- Fast slider wiggles are sent as queued gesture samples so the host can replay them to the assigned toy instead of collapsing them to the latest level.
 - The host can assign each controller to a detected toy.
 - Controllers can see which toy the host assigned to them.
 - Controller requests are routed through the host page to the assigned toy only, where the host's routing toggle, intensity cap, and STOP ALL remain in control.

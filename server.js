@@ -27,7 +27,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.13.0',
+        version: '0.14.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform
       });
@@ -159,9 +159,13 @@ async function handleRoomRoute(req, res, url) {
       approved: false,
       revoked: false,
       connected: true,
+      nextGestureId: 1,
+      gestureEvents: [],
       intent: {
         active: false,
+        mode: 'level',
         intensity: 0,
+        pattern: null,
         updatedAt: new Date().toISOString()
       },
       createdAt: new Date().toISOString(),
@@ -186,17 +190,57 @@ async function handleRoomRoute(req, res, url) {
   if (req.method === 'POST' && parts[5] === 'intent') {
     const body = await readJsonBody(req);
     const intensity = clampIntensity(body?.intensity);
-    const active = Boolean(body?.active) && intensity > 0;
+    const mode = body?.mode === 'pattern' ? 'pattern' : 'level';
+    const pattern = mode === 'pattern' ? cleanPattern(body?.pattern) : null;
+    const active = Boolean(body?.active) && (mode === 'pattern' ? Boolean(pattern) : intensity > 0);
 
     controller.intent = {
       active,
+      mode,
       intensity: active ? intensity : 0,
+      pattern: active ? pattern : null,
       updatedAt: new Date().toISOString()
     };
     controller.connected = true;
     controller.updatedAt = new Date().toISOString();
 
     return sendJson(res, 200, serializeController(controller));
+  }
+
+  if (req.method === 'POST' && parts[5] === 'gesture') {
+    const body = await readJsonBody(req);
+    const rawSamples = Array.isArray(body?.samples) ? body.samples : [];
+    const now = new Date().toISOString();
+    const samples = rawSamples.slice(-30).map((sample) => ({
+      id: controller.nextGestureId++,
+      intensity: clampIntensity(sample?.intensity),
+      sentAt: cleanTimestamp(sample?.sentAt) || now
+    }));
+
+    if (samples.length === 0) {
+      return sendJson(res, 400, { error: 'No gesture samples supplied.' });
+    }
+
+    controller.gestureEvents.push(...samples);
+    controller.gestureEvents = controller.gestureEvents.slice(-120);
+
+    const latest = samples[samples.length - 1];
+    controller.intent = {
+      active: latest.intensity > 0,
+      mode: 'gesture',
+      intensity: latest.intensity,
+      pattern: null,
+      updatedAt: now
+    };
+    controller.connected = true;
+    controller.updatedAt = now;
+
+    return sendJson(res, 200, {
+      ok: true,
+      accepted: samples.length,
+      latest,
+      controller: serializeController(controller)
+    });
   }
 
   if (req.method === 'POST' && parts[5] === 'approval') {
@@ -206,9 +250,12 @@ async function handleRoomRoute(req, res, url) {
     if (!controller.approved) {
       controller.intent = {
         active: false,
+        mode: 'level',
         intensity: 0,
+        pattern: null,
         updatedAt: new Date().toISOString()
       };
+      controller.gestureEvents = [];
     }
     controller.updatedAt = new Date().toISOString();
 
@@ -341,10 +388,37 @@ function cleanName(value) {
   return value.trim().replace(/\s+/g, ' ').slice(0, 64);
 }
 
+function cleanTimestamp(value) {
+  if (typeof value !== 'string') return '';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
 function clampIntensity(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
   return Math.max(0, Math.min(20, Math.round(number)));
+}
+
+function cleanPattern(value) {
+  if (!value || typeof value !== 'object') return null;
+
+  const strengths = String(value.strength || '')
+    .split(';')
+    .map(clampIntensity)
+    .slice(0, 50);
+
+  if (strengths.length === 0 || strengths.every((strength) => strength === 0)) return null;
+
+  const interval = Number(value.interval);
+  const safeInterval = Number.isFinite(interval)
+    ? Math.max(120, Math.min(2000, Math.round(interval)))
+    : 250;
+
+  return {
+    strength: strengths.join(';'),
+    interval: safeInterval
+  };
 }
 
 function serializeRoom(room) {
@@ -366,6 +440,7 @@ function serializeController(controller) {
     revoked: controller.revoked,
     connected: controller.connected,
     intent: controller.intent,
+    gestureEvents: controller.gestureEvents || [],
     createdAt: controller.createdAt,
     updatedAt: controller.updatedAt
   };

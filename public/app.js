@@ -21,6 +21,8 @@ const sdkEvents = [];
 let currentSdk;
 let roomPollTimer;
 const lastToyCommands = new Map();
+const lastGestureIds = new Map();
+let routingBusy = false;
 let state = {
   backendOk: false,
   appConnected: false,
@@ -265,6 +267,7 @@ async function stopToys() {
 
   try {
     const result = await currentSdk.stopToyAction();
+    markAllGesturesSeen();
     lastToyCommands.clear();
     logSdkEvent('stopToyAction', result || 'sent');
     await getToys();
@@ -312,7 +315,7 @@ async function createRoom() {
 
 function startRoomPolling() {
   if (roomPollTimer) clearInterval(roomPollTimer);
-  roomPollTimer = setInterval(pollRoom, 1000);
+  roomPollTimer = setInterval(pollRoom, 250);
   pollRoom();
 }
 
@@ -392,7 +395,7 @@ function renderController(controller) {
   details.textContent = [
     controller.revoked ? 'revoked' : controller.approved ? 'approved' : 'pending',
     assignedToy ? `assigned to ${toyLabel(assignedToy)}` : 'no toy assigned',
-    controller.intent?.active ? `requesting ${controller.intent.intensity}/20` : 'idle'
+    controller.intent?.active ? intentLabel(controller.intent) : 'idle'
   ].join(' · ');
   info.append(name, details);
 
@@ -475,66 +478,157 @@ async function handleControllerAssignment(event) {
 
 async function applyControllerIntent() {
   if (!currentSdk || !state.room || !routingEnabled.checked) return;
+  if (routingBusy) return;
 
   if (!state.toyOnline) {
     logSdkEvent('routingBlocked', 'No online toy detected.');
     return;
   }
 
+  routingBusy = true;
   const activeToyIds = new Set();
-  const onlineToyIds = new Set(connectedToys().map((toy) => toy.id).filter(Boolean));
-  const now = Date.now();
-  const routes = state.room.controllers.filter((controller) => {
-    return controller.approved
-      && !controller.revoked
-      && controller.assignedToyId
-      && onlineToyIds.has(controller.assignedToyId)
-      && controller.intent?.active
-      && controller.intent.intensity > 0;
-  });
+  try {
+    const onlineToyIds = new Set(connectedToys().map((toy) => toy.id).filter(Boolean));
+    const now = Date.now();
+    const routes = state.room.controllers.filter((controller) => {
+      const pendingGestures = pendingGestureEvents(controller);
+      return controller.approved
+        && !controller.revoked
+        && controller.assignedToyId
+        && onlineToyIds.has(controller.assignedToyId)
+        && (controller.intent?.active || pendingGestures.length > 0);
+    });
 
-  for (const controller of routes) {
-    if (activeToyIds.has(controller.assignedToyId)) continue;
+    for (const controller of routes) {
+      if (activeToyIds.has(controller.assignedToyId)) continue;
 
-    const desired = Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity));
-    const previous = lastToyCommands.get(controller.assignedToyId);
-    const shouldSend = !previous
-      || desired !== previous.intensity
-      || controller.id !== previous.controllerId
-      || now - previous.at > 1500;
+      const pendingGestures = pendingGestureEvents(controller);
+      const desired = Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity));
+      const mode = pendingGestures.length > 0 ? 'gesture' : controller.intent.mode === 'pattern' ? 'pattern' : 'level';
+      const previous = lastToyCommands.get(controller.assignedToyId);
 
-    activeToyIds.add(controller.assignedToyId);
-    if (!shouldSend || desired <= 0) continue;
+      activeToyIds.add(controller.assignedToyId);
+      const toy = toyById(controller.assignedToyId);
 
-    const command = {
-      vibrate: desired,
-      time: 2,
-      toyId: controller.assignedToyId
-    };
-    const toy = toyById(controller.assignedToyId);
+      if (mode === 'gesture') {
+        await replayGestureEvents(controller, pendingGestures, toy);
+        continue;
+      }
 
+      if (mode === 'pattern') {
+        const pattern = clampPattern(controller.intent.pattern, clampIntensity(intensityCap.value));
+        const patternKey = pattern ? `${pattern.strength}:${pattern.interval}` : '';
+        const shouldSendPattern = pattern
+          && (!previous
+            || previous.mode !== 'pattern'
+            || previous.patternKey !== patternKey
+            || controller.id !== previous.controllerId);
+
+        if (!shouldSendPattern) continue;
+
+        try {
+          const command = {
+            strength: pattern.strength,
+            interval: pattern.interval,
+            time: 0,
+            vibrate: true,
+            toyId: controller.assignedToyId
+          };
+          const result = await currentSdk.sendPatternCommand(command);
+          lastToyCommands.set(controller.assignedToyId, {
+            mode: 'pattern',
+            patternKey,
+            controllerId: controller.id,
+            at: now
+          });
+          logSdkEvent('routedControllerPattern', {
+            controller: controller.name,
+            pattern,
+            target: toy ? summarizeToyTargets([toy])[0] : controller.assignedToyId,
+            result: result || 'sent'
+          });
+        } catch (error) {
+          logSdkEvent('routingPatternError', errorToText(error));
+        }
+        continue;
+      }
+
+      const shouldSend = !previous
+        || previous.mode !== 'level'
+        || desired !== previous.intensity
+        || controller.id !== previous.controllerId
+        || now - previous.at > 1200;
+
+      if (!shouldSend || desired <= 0) continue;
+
+      try {
+        const command = {
+          vibrate: desired,
+          time: 2,
+          toyId: controller.assignedToyId
+        };
+        const result = await currentSdk.sendToyCommand(command);
+        lastToyCommands.set(controller.assignedToyId, {
+          mode: 'level',
+          intensity: desired,
+          controllerId: controller.id,
+          at: now
+        });
+        logSdkEvent('routedControllerIntent', {
+          controller: controller.name,
+          requested: controller.intent.intensity,
+          sent: desired,
+          target: toy ? summarizeToyTargets([toy])[0] : controller.assignedToyId,
+          result: result || 'sent'
+        });
+      } catch (error) {
+        logSdkEvent('routingError', errorToText(error));
+      }
+    }
+
+    for (const [toyId] of lastToyCommands) {
+      if (!activeToyIds.has(toyId)) {
+        await stopToy(toyId);
+      }
+    }
+  } finally {
+    routingBusy = false;
+  }
+}
+
+async function replayGestureEvents(controller, events, toy) {
+  const cap = clampIntensity(intensityCap.value);
+  const orderedEvents = events
+    .slice(0, 24)
+    .sort((a, b) => a.id - b.id);
+
+  for (const event of orderedEvents) {
+    const intensity = Math.min(cap, clampIntensity(event.intensity));
     try {
+      const command = {
+        vibrate: intensity,
+        time: 2,
+        toyId: controller.assignedToyId
+      };
       const result = await currentSdk.sendToyCommand(command);
+      lastGestureIds.set(controller.id, event.id);
       lastToyCommands.set(controller.assignedToyId, {
-        intensity: desired,
+        mode: 'gesture',
+        intensity,
         controllerId: controller.id,
-        at: now
+        at: Date.now()
       });
-      logSdkEvent('routedControllerIntent', {
+      logSdkEvent('routedGestureSample', {
         controller: controller.name,
-        requested: controller.intent.intensity,
-        sent: desired,
+        sent: intensity,
         target: toy ? summarizeToyTargets([toy])[0] : controller.assignedToyId,
+        sample: event.id,
         result: result || 'sent'
       });
+      await wait(80);
     } catch (error) {
-      logSdkEvent('routingError', errorToText(error));
-    }
-  }
-
-  for (const [toyId] of lastToyCommands) {
-    if (!activeToyIds.has(toyId)) {
-      await stopToy(toyId);
+      logSdkEvent('routingGestureError', errorToText(error));
+      break;
     }
   }
 }
@@ -748,6 +842,43 @@ function summarizeToyTargets(toys) {
   }));
 }
 
+function pendingGestureEvents(controller) {
+  const lastId = lastGestureIds.get(controller.id) || 0;
+  return (controller.gestureEvents || []).filter((event) => event.id > lastId);
+}
+
+function markAllGesturesSeen() {
+  if (!state.room?.controllers) return;
+  state.room.controllers.forEach((controller) => {
+    const events = controller.gestureEvents || [];
+    const latest = events[events.length - 1];
+    if (latest) lastGestureIds.set(controller.id, latest.id);
+  });
+}
+
+function intentLabel(intent) {
+  if (intent.mode === 'gesture') return `replaying ${intent.intensity}/20`;
+  if (intent.mode === 'pattern') return 'requesting pattern';
+  return `requesting ${intent.intensity}/20`;
+}
+
+function clampPattern(pattern, cap) {
+  if (!pattern?.strength) return null;
+  const max = clampIntensity(cap);
+  const strengths = String(pattern.strength)
+    .split(';')
+    .map((value) => Math.min(max, clampIntensity(value)))
+    .slice(0, 50);
+
+  if (strengths.length === 0 || strengths.every((value) => value === 0)) return null;
+
+  const interval = Number(pattern.interval);
+  return {
+    strength: strengths.join(';'),
+    interval: Number.isFinite(interval) ? Math.max(120, Math.min(2000, Math.round(interval))) : 250
+  };
+}
+
 function formatBattery(value) {
   if (value === undefined || value === null || value === 0) return 'battery unknown';
   return `${value}% battery`;
@@ -770,4 +901,10 @@ function clampIntensity(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
   return Math.max(0, Math.min(20, Math.round(number)));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
