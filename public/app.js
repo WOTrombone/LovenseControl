@@ -20,9 +20,12 @@ const routingEnabled = document.querySelector('#routing-enabled');
 const sdkEvents = [];
 let currentSdk;
 let roomPollTimer;
+let roomSocket;
 const lastToyCommands = new Map();
 const lastGestureIds = new Map();
 let routingBusy = false;
+let routingQueued = false;
+let routingGeneration = 0;
 let state = {
   backendOk: false,
   appConnected: false,
@@ -265,15 +268,23 @@ async function stopToys() {
     return;
   }
 
-  try {
-    const result = await currentSdk.stopToyAction();
-    markAllGesturesSeen();
-    lastToyCommands.clear();
-    logSdkEvent('stopToyAction', result || 'sent');
-    await getToys();
-  } catch (error) {
-    logSdkEvent('stopError', errorToText(error));
-  }
+  routingGeneration += 1;
+  routingEnabled.checked = false;
+  markAllGesturesSeen();
+  lastToyCommands.clear();
+  clearLocalControllerActivity();
+
+  logSdkEvent('hardStopStarted', {
+    routeGeneration: routingGeneration,
+    toys: summarizeToyTargets(connectedToys())
+  });
+
+  tryRoomStop();
+  fireHardStopBurst();
+  setTimeout(fireHardStopBurst, 180);
+  setTimeout(() => {
+    getToys();
+  }, 900);
 }
 
 async function createRoom() {
@@ -315,8 +326,43 @@ async function createRoom() {
 
 function startRoomPolling() {
   if (roomPollTimer) clearInterval(roomPollTimer);
-  roomPollTimer = setInterval(pollRoom, 250);
+  if (roomSocket) roomSocket.close();
+  openRoomSocket();
+  roomPollTimer = setInterval(pollRoom, 5000);
   pollRoom();
+}
+
+function openRoomSocket() {
+  if (!state.room?.id || !window.WebSocket) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${window.location.host}/api/rooms/${state.room.id}/socket`);
+  roomSocket = socket;
+
+  socket.addEventListener('open', () => {
+    logSdkEvent('roomSocket', 'connected');
+  });
+
+  socket.addEventListener('message', async (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type !== 'room' || message.room?.id !== state.room?.id) return;
+      await updateRoomState(message.room);
+    } catch (error) {
+      logSdkEvent('roomSocketMessageError', errorToText(error));
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    if (roomSocket === socket) {
+      roomSocket = undefined;
+      logSdkEvent('roomSocket', 'closed; using slow fallback polling');
+    }
+  });
+
+  socket.addEventListener('error', () => {
+    logSdkEvent('roomSocketError', 'WebSocket update failed; fallback polling is still active.');
+  });
 }
 
 async function pollRoom() {
@@ -324,15 +370,23 @@ async function pollRoom() {
 
   try {
     const room = await getJson(`/api/rooms/${state.room.id}`);
-    state = {
-      ...state,
-      room
-    };
-    renderControllers();
-    await applyControllerIntent();
+    await updateRoomState(room);
   } catch (error) {
     logSdkEvent('roomPollError', errorToText(error));
   }
+}
+
+async function updateRoomState(room) {
+  if (roomUpdateCancelsRouting(state.room, room)) {
+    routingGeneration += 1;
+  }
+
+  state = {
+    ...state,
+    room
+  };
+  renderControllers();
+  await applyControllerIntent();
 }
 
 async function handleControllerAction(event) {
@@ -478,7 +532,10 @@ async function handleControllerAssignment(event) {
 
 async function applyControllerIntent() {
   if (!currentSdk || !state.room || !routingEnabled.checked) return;
-  if (routingBusy) return;
+  if (routingBusy) {
+    routingQueued = true;
+    return;
+  }
 
   if (!state.toyOnline) {
     logSdkEvent('routingBlocked', 'No online toy detected.');
@@ -486,6 +543,8 @@ async function applyControllerIntent() {
   }
 
   routingBusy = true;
+  routingQueued = false;
+  const runGeneration = routingGeneration;
   const activeToyIds = new Set();
   try {
     const onlineToyIds = new Set(connectedToys().map((toy) => toy.id).filter(Boolean));
@@ -511,9 +570,11 @@ async function applyControllerIntent() {
       const toy = toyById(controller.assignedToyId);
 
       if (mode === 'gesture') {
-        await replayGestureEvents(controller, pendingGestures, toy);
+        await replayGestureEvents(controller, pendingGestures, toy, runGeneration);
         continue;
       }
+
+      if (runGeneration !== routingGeneration) return;
 
       if (mode === 'pattern') {
         const pattern = clampPattern(controller.intent.pattern, clampIntensity(intensityCap.value));
@@ -562,12 +623,7 @@ async function applyControllerIntent() {
       if (!shouldSend || desired <= 0) continue;
 
       try {
-        const command = {
-          vibrate: desired,
-          time: 2,
-          toyId: controller.assignedToyId
-        };
-        const result = await currentSdk.sendToyCommand(command);
+        const result = await sendVibrateCommand(controller.assignedToyId, desired);
         lastToyCommands.set(controller.assignedToyId, {
           mode: 'level',
           intensity: desired,
@@ -593,24 +649,27 @@ async function applyControllerIntent() {
     }
   } finally {
     routingBusy = false;
+    if (routingQueued) {
+      routingQueued = false;
+      queueMicrotask(() => {
+        applyControllerIntent();
+      });
+    }
   }
 }
 
-async function replayGestureEvents(controller, events, toy) {
+async function replayGestureEvents(controller, events, toy, runGeneration) {
   const cap = clampIntensity(intensityCap.value);
   const orderedEvents = events
     .slice(0, 24)
     .sort((a, b) => a.id - b.id);
 
   for (const event of orderedEvents) {
+    if (runGeneration !== routingGeneration || !routingEnabled.checked) return;
+
     const intensity = Math.min(cap, clampIntensity(event.intensity));
     try {
-      const command = {
-        vibrate: intensity,
-        time: 2,
-        toyId: controller.assignedToyId
-      };
-      const result = await currentSdk.sendToyCommand(command);
+      const result = await sendVibrateCommand(controller.assignedToyId, intensity);
       lastGestureIds.set(controller.id, event.id);
       lastToyCommands.set(controller.assignedToyId, {
         mode: 'gesture',
@@ -625,7 +684,7 @@ async function replayGestureEvents(controller, events, toy) {
         sample: event.id,
         result: result || 'sent'
       });
-      await wait(80);
+      await wait(55);
     } catch (error) {
       logSdkEvent('routingGestureError', errorToText(error));
       break;
@@ -635,12 +694,7 @@ async function replayGestureEvents(controller, events, toy) {
 
 async function stopToy(toyId) {
   try {
-    const command = {
-      vibrate: 0,
-      time: 2,
-      toyId
-    };
-    const result = await currentSdk.sendToyCommand(command);
+    const result = await sendHardStopCommand(toyId);
     lastToyCommands.delete(toyId);
     logSdkEvent('routedToyStop', {
       toyId,
@@ -709,6 +763,177 @@ async function testVibrateToy(toyId) {
   } catch (error) {
     logSdkEvent('testVibrateError', errorToText(error));
   }
+}
+
+async function sendVibrateCommand(toyId, intensity) {
+  const safeIntensity = clampIntensity(intensity);
+  const lanResult = await sendLanFunction({
+    action: `Vibrate:${safeIntensity}`,
+    toyId,
+    timeoutMs: 700
+  });
+
+  if (lanResult.ok) {
+    return {
+      path: 'lan',
+      result: lanResult.data || 'sent'
+    };
+  }
+
+  const sdkResult = await currentSdk.sendToyCommand({
+    vibrate: safeIntensity,
+    time: 0,
+    toyId
+  });
+
+  return {
+    path: 'sdk',
+    lanError: lanResult.error,
+    result: sdkResult || 'sent'
+  };
+}
+
+async function sendHardStopCommand(toyId = '') {
+  const stopCommands = [
+    safeSdkStop(toyId),
+    safeSdkZero(toyId),
+    sendLanFunction({ action: 'Stop', toyId, timeoutMs: 500 }),
+    sendLanFunction({ action: 'Vibrate:0', toyId, timeoutMs: 500 })
+  ];
+
+  const settled = await Promise.allSettled(stopCommands);
+  return settled.map((result) => result.status === 'fulfilled' ? result.value : {
+    ok: false,
+    error: errorToText(result.reason)
+  });
+}
+
+function fireHardStopBurst() {
+  const toyIds = connectedToys().map((toy) => toy.id).filter(Boolean);
+  const targets = ['', ...toyIds];
+
+  targets.forEach((toyId) => {
+    sendHardStopCommand(toyId).then((result) => {
+      logSdkEvent('hardStopCommand', {
+        toyId: toyId || 'all',
+        result
+      });
+    }).catch((error) => {
+      logSdkEvent('hardStopError', {
+        toyId: toyId || 'all',
+        error: errorToText(error)
+      });
+    });
+  });
+}
+
+async function safeSdkStop(toyId) {
+  try {
+    const result = toyId
+      ? await currentSdk.stopToyAction({ toyId })
+      : await currentSdk.stopToyAction();
+    return {
+      ok: true,
+      path: 'sdk-stop',
+      result: result || 'sent'
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path: 'sdk-stop',
+      error: errorToText(error)
+    };
+  }
+}
+
+async function safeSdkZero(toyId) {
+  try {
+    const command = {
+      vibrate: 0,
+      time: 0
+    };
+    if (toyId) command.toyId = toyId;
+    const result = await currentSdk.sendToyCommand(command);
+    return {
+      ok: true,
+      path: 'sdk-zero',
+      result: result || 'sent'
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path: 'sdk-zero',
+      error: errorToText(error)
+    };
+  }
+}
+
+async function sendLanFunction({ action, toyId = '', timeoutMs = 700 }) {
+  if (!state.deviceInfo?.domain || !state.deviceInfo?.httpsPort) {
+    return {
+      ok: false,
+      path: 'lan',
+      error: 'No Lovense Remote LAN endpoint is available yet.'
+    };
+  }
+
+  try {
+    const payload = {
+      command: 'Function',
+      action,
+      timeSec: 0,
+      stopPrevious: 1,
+      apiVer: 1
+    };
+    if (toyId) payload.toy = toyId;
+
+    const response = await fetchWithTimeout(`https://${state.deviceInfo.domain}:${state.deviceInfo.httpsPort}/command`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-platform': 'LovenseControl'
+      },
+      body: JSON.stringify(payload)
+    }, timeoutMs);
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || (data?.code && Number(data.code) !== 200)) {
+      return {
+        ok: false,
+        path: 'lan',
+        error: JSON.stringify(data || { status: response.status })
+      };
+    }
+
+    return {
+      ok: true,
+      path: 'lan',
+      data: data || 'sent'
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      path: 'lan',
+      error: errorToText(error)
+    };
+  }
+}
+
+function tryRoomStop() {
+  if (!state.room?.id) return;
+
+  fetchWithTimeout(`/api/rooms/${state.room.id}/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  }, 1000).then((response) => response.json()).then((room) => {
+    state = {
+      ...state,
+      room
+    };
+    renderControllers();
+  }).catch((error) => {
+    logSdkEvent('roomStopError', errorToText(error));
+  });
 }
 
 function testCommand() {
@@ -847,6 +1072,21 @@ function pendingGestureEvents(controller) {
   return (controller.gestureEvents || []).filter((event) => event.id > lastId);
 }
 
+function roomUpdateCancelsRouting(previousRoom, nextRoom) {
+  if (!previousRoom?.controllers || !nextRoom?.controllers) return false;
+
+  const previousById = new Map(previousRoom.controllers.map((controller) => [controller.id, controller]));
+
+  return nextRoom.controllers.some((controller) => {
+    const previous = previousById.get(controller.id);
+    if (!previous) return false;
+
+    const wasActive = Boolean(previous.intent?.active) || (previous.gestureEvents || []).length > 0;
+    const nowStopped = !controller.intent?.active && (controller.gestureEvents || []).length === 0;
+    return wasActive && (nowStopped || controller.revoked || !controller.approved);
+  });
+}
+
 function markAllGesturesSeen() {
   if (!state.room?.controllers) return;
   state.room.controllers.forEach((controller) => {
@@ -854,6 +1094,29 @@ function markAllGesturesSeen() {
     const latest = events[events.length - 1];
     if (latest) lastGestureIds.set(controller.id, latest.id);
   });
+}
+
+function clearLocalControllerActivity() {
+  if (!state.room?.controllers) return;
+
+  state = {
+    ...state,
+    room: {
+      ...state.room,
+      controllers: state.room.controllers.map((controller) => ({
+        ...controller,
+        gestureEvents: [],
+        intent: {
+          active: false,
+          mode: 'level',
+          intensity: 0,
+          pattern: null,
+          updatedAt: new Date().toISOString()
+        }
+      }))
+    }
+  };
+  renderControllers();
 }
 
 function intentLabel(intent) {

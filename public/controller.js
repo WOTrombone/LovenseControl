@@ -20,6 +20,7 @@ const chaosMode = document.querySelector('#chaos-mode');
 
 let controllerId = '';
 let pollTimer;
+let roomSocket;
 let sendTimer;
 let gestureQueue = [];
 let approved = false;
@@ -78,8 +79,34 @@ async function requestAccess() {
 
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(loadController, 1000);
+  if (roomSocket) roomSocket.close();
+  openRoomSocket();
+  pollTimer = setInterval(loadController, 5000);
   loadController();
+}
+
+function openRoomSocket() {
+  if (!roomId || !controllerId || !window.WebSocket) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${window.location.host}/api/rooms/${roomId}/socket`);
+  roomSocket = socket;
+
+  socket.addEventListener('message', (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type !== 'room') return;
+      const controller = (message.room?.controllers || []).find((candidate) => candidate.id === controllerId);
+      if (controller) renderController(controller);
+    } catch (error) {
+      statusText.textContent = 'Live update failed';
+      note.textContent = errorToText(error);
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    if (roomSocket === socket) roomSocket = undefined;
+  });
 }
 
 async function loadController() {
@@ -180,10 +207,10 @@ async function stopSending() {
   intensity.value = '0';
   renderIntensity();
   renderMode();
-  gestureQueue.push({
+  gestureQueue = [{
     intensity: 0,
     sentAt: new Date().toISOString()
-  });
+  }];
   await flushGestureQueue();
   await sendIntent(false, {
     mode: 'level'
@@ -200,6 +227,8 @@ async function useLiveMode() {
 async function usePulseMode() {
   if (!controlsEnabled) return;
   if (sendTimer) clearTimeout(sendTimer);
+  sendTimer = undefined;
+  gestureQueue = [];
   controlMode = 'pattern';
   renderMode();
   await sendIntent(true, {
@@ -214,6 +243,8 @@ async function usePulseMode() {
 async function useChaosMode() {
   if (!controlsEnabled) return;
   if (sendTimer) clearTimeout(sendTimer);
+  sendTimer = undefined;
+  gestureQueue = [];
   controlMode = 'chaos';
   renderMode();
   await sendIntent(true, {

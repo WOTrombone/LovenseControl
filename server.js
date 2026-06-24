@@ -18,6 +18,7 @@ const lovensePlatform = process.env.LOVENSE_PLATFORM || 'LovenseControl';
 const callbackEvents = [];
 const lovenseRequestTimeoutMs = 10000;
 const rooms = new Map();
+const roomSocketClients = new Map();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -27,7 +28,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.14.0',
+        version: '0.16.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform
       });
@@ -69,6 +70,60 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, () => {
   console.log(`LovenseControl listening on port ${port}`);
+});
+
+server.on('upgrade', (req, socket) => {
+  try {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const parts = url.pathname.split('/').filter(Boolean);
+
+    if (parts.length !== 4 || parts[0] !== 'api' || parts[1] !== 'rooms' || parts[3] !== 'socket') {
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const roomId = cleanId(parts[2]);
+    const room = rooms.get(roomId);
+    const key = req.headers['sec-websocket-key'];
+
+    if (!room || typeof key !== 'string') {
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const acceptKey = crypto
+      .createHash('sha1')
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64');
+
+    socket.write([
+      'HTTP/1.1 101 Switching Protocols',
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Accept: ${acceptKey}`,
+      '\r\n'
+    ].join('\r\n'));
+
+    addRoomSocketClient(room.id, socket);
+    sendRoomSocketMessage(socket, room);
+
+    const keepAlive = setInterval(() => {
+      sendWebSocketFrame(socket, 0x9, '');
+    }, 25000);
+
+    const cleanup = () => {
+      clearInterval(keepAlive);
+      removeRoomSocketClient(room.id, socket);
+    };
+
+    socket.on('close', cleanup);
+    socket.on('end', cleanup);
+    socket.on('error', cleanup);
+  } catch {
+    socket.destroy();
+  }
 });
 
 async function handleLovenseToken(req, res) {
@@ -128,6 +183,7 @@ async function handleCreateRoom(req, res) {
   };
 
   rooms.set(roomId, room);
+  broadcastRoom(room);
   return sendJson(res, 201, serializeRoom(room));
 }
 
@@ -141,6 +197,25 @@ async function handleRoomRoute(req, res, url) {
   }
 
   if (req.method === 'GET' && parts.length === 3) {
+    return sendJson(res, 200, serializeRoom(room));
+  }
+
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'stop') {
+    const stoppedAt = new Date().toISOString();
+
+    for (const controller of room.controllers.values()) {
+      controller.intent = {
+        active: false,
+        mode: 'level',
+        intensity: 0,
+        pattern: null,
+        updatedAt: stoppedAt
+      };
+      controller.gestureEvents = [];
+      controller.updatedAt = stoppedAt;
+    }
+
+    broadcastRoom(room);
     return sendJson(res, 200, serializeRoom(room));
   }
 
@@ -173,6 +248,7 @@ async function handleRoomRoute(req, res, url) {
     };
 
     room.controllers.set(controllerId, controller);
+    broadcastRoom(room);
     return sendJson(res, 201, serializeController(controller));
   }
 
@@ -204,6 +280,11 @@ async function handleRoomRoute(req, res, url) {
     controller.connected = true;
     controller.updatedAt = new Date().toISOString();
 
+    if (!active) {
+      controller.gestureEvents = [];
+    }
+
+    broadcastRoom(room);
     return sendJson(res, 200, serializeController(controller));
   }
 
@@ -235,6 +316,7 @@ async function handleRoomRoute(req, res, url) {
     controller.connected = true;
     controller.updatedAt = now;
 
+    broadcastRoom(room);
     return sendJson(res, 200, {
       ok: true,
       accepted: samples.length,
@@ -259,6 +341,7 @@ async function handleRoomRoute(req, res, url) {
     }
     controller.updatedAt = new Date().toISOString();
 
+    broadcastRoom(room);
     return sendJson(res, 200, serializeController(controller));
   }
 
@@ -268,6 +351,7 @@ async function handleRoomRoute(req, res, url) {
     controller.assignedToyName = controller.assignedToyId ? cleanName(body?.assignedToyName) : '';
     controller.updatedAt = new Date().toISOString();
 
+    broadcastRoom(room);
     return sendJson(res, 200, serializeController(controller));
   }
 
@@ -350,6 +434,58 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
+function addRoomSocketClient(roomId, socket) {
+  const clients = roomSocketClients.get(roomId) || new Set();
+  clients.add(socket);
+  roomSocketClients.set(roomId, clients);
+}
+
+function removeRoomSocketClient(roomId, socket) {
+  const clients = roomSocketClients.get(roomId);
+  if (!clients) return;
+  clients.delete(socket);
+  if (clients.size === 0) roomSocketClients.delete(roomId);
+}
+
+function broadcastRoom(room) {
+  const clients = roomSocketClients.get(room.id);
+  if (!clients) return;
+
+  for (const client of clients) {
+    sendRoomSocketMessage(client, room);
+  }
+}
+
+function sendRoomSocketMessage(socket, room) {
+  sendWebSocketFrame(socket, 0x1, JSON.stringify({
+    type: 'room',
+    room: serializeRoom(room)
+  }));
+}
+
+function sendWebSocketFrame(socket, opcode, payload) {
+  if (socket.destroyed) return;
+
+  const body = Buffer.from(String(payload));
+  let header;
+
+  if (body.length < 126) {
+    header = Buffer.from([0x80 | opcode, body.length]);
+  } else if (body.length < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 126;
+    header.writeUInt16BE(body.length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(body.length), 2);
+  }
+
+  socket.write(Buffer.concat([header, body]));
+}
+
 function securityHeaders(type) {
   return {
     'Content-Type': type,
@@ -359,7 +495,7 @@ function securityHeaders(type) {
     'Content-Security-Policy': [
       "default-src 'self'",
       "script-src 'self' https://api.lovense-api.com",
-      "connect-src 'self' https://api.lovense-api.com https://*.lovense-api.com https://*.lovense.club:* wss://*.lovense-api.com wss://*.lovense.club:*",
+      "connect-src 'self' ws: wss: https://api.lovense-api.com https://*.lovense-api.com https://*.lovense.club:* wss://*.lovense-api.com wss://*.lovense.club:*",
       "img-src 'self' data: https://*.lovense.com https://*.lovense-api.com",
       "style-src 'self' 'unsafe-inline'"
     ].join('; ')

@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.14: controller-visible assignment with gesture replay.
+This is v0.16: low-latency LAN-first routing with hard STOP.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -20,6 +20,11 @@ This is v0.14: controller-visible assignment with gesture replay.
 - The host can create an in-memory controller room and copy a controller invite link.
 - `/controller.html` lets a controller request access, wait for host approval, see the assigned toy, and use a mobile control-room style vertical live intensity slider.
 - Fast slider wiggles are sent as queued gesture samples so the host can replay them to the assigned toy instead of collapsing them to the latest level.
+- Host and controller pages receive room updates over WebSocket instead of relying on the old 250ms host polling loop.
+- Routed live vibration commands use indefinite `time: 0` commands instead of two-second command windows.
+- When Lovense Remote reports a LAN endpoint, routed vibration prefers the local `https://{domain}:{httpsPort}/command` API and falls back to the Standard JS SDK if LAN fails.
+- `STOP ALL` cancels any in-progress gesture replay, clears the room's controller queues, disables live routing, and sends a parallel hard-stop burst over both LAN and the Standard JS SDK.
+- Controller stop/inactive requests clear queued gesture samples on the server.
 - The host can assign each controller to a detected toy.
 - Controllers can see which toy the host assigned to them.
 - Controller requests are routed through the host page to the assigned toy only, where the host's routing toggle, intensity cap, and STOP ALL remain in control.
