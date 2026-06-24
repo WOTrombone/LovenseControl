@@ -17,6 +17,7 @@ const createRoomButton = document.querySelector('#create-room');
 const controllersList = document.querySelector('#controllers-list');
 const intensityCap = document.querySelector('#intensity-cap');
 const routingEnabled = document.querySelector('#routing-enabled');
+const hostNameInput = document.querySelector('[name="uname"]');
 const savedRoomKey = 'lovensecontrol.hostRoomId';
 const sdkEvents = [];
 let currentSdk;
@@ -39,6 +40,7 @@ let state = {
 document.querySelector('#check-health').addEventListener('click', checkHealth);
 document.querySelector('#refresh-callbacks').addEventListener('click', loadCallbacks);
 document.querySelector('#host-form').addEventListener('submit', createHostSession);
+hostNameInput.addEventListener('change', updateHostNameFromInput);
 document.querySelector('#check-app-status').addEventListener('click', checkAppStatus);
 document.querySelector('#get-toys').addEventListener('click', getToys);
 refreshStateButton.addEventListener('click', refreshSdkState);
@@ -436,7 +438,9 @@ async function createRoom() {
 }
 
 async function ensureRoom(hostName, forceNew = false) {
-  if (state.room?.id && !forceNew) return state.room;
+  if (state.room?.id && !forceNew) {
+    return updateRoomHostName(hostName);
+  }
 
   const response = await fetchWithTimeout('/api/rooms', {
     method: 'POST',
@@ -459,6 +463,37 @@ async function ensureRoom(hostName, forceNew = false) {
   renderControllers();
   startRoomPolling();
   updateRoomSafety();
+  return room;
+}
+
+async function updateHostNameFromInput() {
+  if (!state.room?.id) return;
+  try {
+    await updateRoomHostName(hostNameInput.value);
+  } catch (error) {
+    logSdkEvent('hostNameUpdateError', errorToText(error));
+  }
+}
+
+async function updateRoomHostName(hostName) {
+  if (!state.room?.id) return state.room;
+
+  const cleanHostName = cleanName(hostName) || 'Host';
+  if (state.room.hostName === cleanHostName) return state.room;
+
+  const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/host`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hostName: cleanHostName })
+  }, 5000);
+  const room = await response.json();
+
+  if (!response.ok) {
+    throw new Error(room.error || 'Host name update failed.');
+  }
+
+  await updateRoomState(room);
+  logSdkEvent('hostNameUpdated', { hostName: room.hostName });
   return room;
 }
 
@@ -603,6 +638,9 @@ function syncRoomSafetyControls(room) {
   if (!room?.safety) return;
   intensityCap.value = clampIntensity(room.safety.intensityCap);
   routingEnabled.checked = Boolean(room.safety.routingEnabled);
+  if (room.hostName && hostNameInput.value !== room.hostName) {
+    hostNameInput.value = room.hostName;
+  }
 }
 
 async function handleControllerAction(event) {

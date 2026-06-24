@@ -3,6 +3,7 @@ const roomId = cleanId(params.get('room')) || '';
 const defaultName = cleanName(params.get('name')) || 'Controller';
 
 const title = document.querySelector('#controller-title');
+const hostName = document.querySelector('#host-name');
 const roomLabel = document.querySelector('#room-label');
 const statusText = document.querySelector('#controller-status');
 const note = document.querySelector('#controller-note');
@@ -99,6 +100,7 @@ function openRoomSocket() {
     try {
       const message = JSON.parse(event.data);
       if (message.type !== 'room') return;
+      renderHostName(message.room?.hostName);
       const controller = (message.room?.controllers || []).find((candidate) => candidate.id === controllerId);
       if (controller) renderController(controller);
     } catch (error) {
@@ -126,6 +128,7 @@ async function loadController() {
 }
 
 function renderController(controller) {
+  renderHostName(controller.hostName);
   approved = Boolean(controller.approved);
   revoked = Boolean(controller.revoked);
   const toyName = cleanName(controller.assignedToyName) || cleanId(controller.assignedToyId);
@@ -171,6 +174,10 @@ function renderController(controller) {
   note.textContent = 'The host can approve or revoke this request from their dashboard.';
   joinPanel.hidden = true;
   setControlEnabled(false);
+}
+
+function renderHostName(value) {
+  hostName.textContent = cleanName(value) || 'Host';
 }
 
 function renderState() {

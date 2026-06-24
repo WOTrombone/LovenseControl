@@ -29,7 +29,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.19.2',
+        version: '0.19.3',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform,
         backendSocketRouting: true
@@ -224,6 +224,13 @@ async function handleRoomRoute(req, res, url) {
     return sendJson(res, 200, serializeRoom(room));
   }
 
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'host') {
+    const body = await readJsonBody(req);
+    room.hostName = cleanName(body?.hostName) || room.hostName || 'Host';
+    broadcastRoom(room);
+    return sendJson(res, 200, serializeRoom(room));
+  }
+
   if (req.method === 'POST' && parts.length === 5 && parts[3] === 'toys' && parts[4] === 'settings') {
     const body = await readJsonBody(req);
     const toyId = cleanId(body?.toyId);
@@ -298,7 +305,7 @@ async function handleRoomRoute(req, res, url) {
 
     room.controllers.set(controllerId, controller);
     broadcastRoom(room);
-    return sendJson(res, 201, serializeController(controller));
+    return sendJson(res, 201, serializeController(controller, room));
   }
 
   const controllerId = cleanId(parts[4]);
@@ -309,7 +316,7 @@ async function handleRoomRoute(req, res, url) {
   }
 
   if (req.method === 'GET' && parts.length === 5) {
-    return sendJson(res, 200, serializeController(controller));
+    return sendJson(res, 200, serializeController(controller, room));
   }
 
   if (req.method === 'POST' && parts[5] === 'intent') {
@@ -332,7 +339,7 @@ async function handleRoomRoute(req, res, url) {
 
     routeRoomControllerIntents(room);
     broadcastRoom(room);
-    return sendJson(res, 200, serializeController(controller));
+    return sendJson(res, 200, serializeController(controller, room));
   }
 
   if (req.method === 'POST' && parts[5] === 'gesture') {
@@ -368,7 +375,7 @@ async function handleRoomRoute(req, res, url) {
       accepted: rawSamples.length,
       collapsedToLatest: true,
       latest,
-      controller: serializeController(controller)
+      controller: serializeController(controller, room)
     });
   }
 
@@ -390,7 +397,7 @@ async function handleRoomRoute(req, res, url) {
 
     routeRoomControllerIntents(room);
     broadcastRoom(room);
-    return sendJson(res, 200, serializeController(controller));
+    return sendJson(res, 200, serializeController(controller, room));
   }
 
   if (req.method === 'POST' && parts[5] === 'assignment') {
@@ -401,7 +408,7 @@ async function handleRoomRoute(req, res, url) {
 
     routeRoomControllerIntents(room);
     broadcastRoom(room);
-    return sendJson(res, 200, serializeController(controller));
+    return sendJson(res, 200, serializeController(controller, room));
   }
 
   return sendJson(res, 404, { error: 'Not found', path: url.pathname });
@@ -466,6 +473,7 @@ async function handleRoomLovenseSession(req, res, room) {
   const body = await readJsonBody(req);
   const uid = cleanId(body?.uid) || `host-${room.id}`;
   const uname = cleanName(body?.uname) || room.hostName || 'Host';
+  room.hostName = uname;
 
   try {
     const token = await requestLovenseToken(uid, uname);
@@ -1079,7 +1087,7 @@ function serializeRoom(room) {
     },
     toySettings: serializeToySettings(room),
     lovense: serializeRoomLovense(room.lovense),
-    controllers: Array.from(room.controllers.values()).map(serializeController)
+    controllers: Array.from(room.controllers.values()).map((controller) => serializeController(controller, room))
   };
 }
 
@@ -1133,9 +1141,10 @@ function serializeRoomLovense(lovense = {}) {
   };
 }
 
-function serializeController(controller) {
+function serializeController(controller, room = null) {
   return {
     id: controller.id,
+    hostName: room?.hostName || '',
     name: controller.name,
     assignedToyId: controller.assignedToyId || '',
     assignedToyName: controller.assignedToyName || '',
