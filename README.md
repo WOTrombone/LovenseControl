@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.19.3: per-toy safety caps, toy labels, offline-toy clarity, and host display-name persistence.
+This is v0.19.4: per-toy safety caps, toy labels, offline-toy clarity, and stable host display-name persistence.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
@@ -40,6 +40,7 @@ This is v0.19.3: per-toy safety caps, toy labels, offline-toy clarity, and host 
 - Toy lists sort online toys first, then remembered/offline toys.
 - Offline toys remain visible for labels/caps, but are marked remembered/offline and cannot be tested or assigned for live control.
 - The host display name is saved to the room and shown on controller pages instead of the hardcoded Host label.
+- Display Name edits save while typing and room refreshes no longer reset the active input back to Host.
 - The old browser SDK/LAN routing code remains in place as a fallback path while the backend socket path is tested.
 - `STOP ALL` clears controller intents and sends backend socket stop/zero commands immediately.
 - `STOP ALL` no longer disables live routing; the host can use the live-routing checkbox as the separate pause/resume control.

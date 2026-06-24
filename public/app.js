@@ -28,6 +28,7 @@ const lastGestureIds = new Map();
 let routingBusy = false;
 let routingQueued = false;
 let routingGeneration = 0;
+let hostNameSaveTimer;
 let state = {
   backendOk: false,
   appConnected: false,
@@ -40,6 +41,7 @@ let state = {
 document.querySelector('#check-health').addEventListener('click', checkHealth);
 document.querySelector('#refresh-callbacks').addEventListener('click', loadCallbacks);
 document.querySelector('#host-form').addEventListener('submit', createHostSession);
+hostNameInput.addEventListener('input', scheduleHostNameUpdate);
 hostNameInput.addEventListener('change', updateHostNameFromInput);
 document.querySelector('#check-app-status').addEventListener('click', checkAppStatus);
 document.querySelector('#get-toys').addEventListener('click', getToys);
@@ -467,6 +469,8 @@ async function ensureRoom(hostName, forceNew = false) {
 }
 
 async function updateHostNameFromInput() {
+  if (hostNameSaveTimer) clearTimeout(hostNameSaveTimer);
+  hostNameSaveTimer = undefined;
   if (!state.room?.id) return;
   try {
     await updateRoomHostName(hostNameInput.value);
@@ -495,6 +499,13 @@ async function updateRoomHostName(hostName) {
   await updateRoomState(room);
   logSdkEvent('hostNameUpdated', { hostName: room.hostName });
   return room;
+}
+
+function scheduleHostNameUpdate() {
+  if (hostNameSaveTimer) clearTimeout(hostNameSaveTimer);
+  hostNameSaveTimer = setTimeout(() => {
+    updateHostNameFromInput();
+  }, 450);
 }
 
 function setControllerInvite(roomId) {
@@ -638,7 +649,12 @@ function syncRoomSafetyControls(room) {
   if (!room?.safety) return;
   intensityCap.value = clampIntensity(room.safety.intensityCap);
   routingEnabled.checked = Boolean(room.safety.routingEnabled);
-  if (room.hostName && hostNameInput.value !== room.hostName) {
+  if (
+    room.hostName
+    && hostNameInput.value !== room.hostName
+    && document.activeElement !== hostNameInput
+    && !hostNameSaveTimer
+  ) {
     hostNameInput.value = room.hostName;
   }
 }
@@ -1536,6 +1552,10 @@ function normalizeToyList(value) {
 
 function cleanId(value) {
   return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+}
+
+function cleanName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 64);
 }
 
 function clampIntensity(value) {
