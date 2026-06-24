@@ -29,7 +29,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.18.4',
+        version: '0.19.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
         platform: lovensePlatform,
         backendSocketRouting: true
@@ -164,6 +164,7 @@ async function handleCreateRoom(req, res) {
     createdAt: new Date().toISOString(),
     controllers: new Map(),
     commandState: new Map(),
+    toySettings: new Map(),
     safety: {
       routingEnabled: false,
       intensityCap: 5
@@ -219,6 +220,27 @@ async function handleRoomRoute(req, res, url) {
       routeRoomControllerIntents(room);
     }
 
+    broadcastRoom(room);
+    return sendJson(res, 200, serializeRoom(room));
+  }
+
+  if (req.method === 'POST' && parts.length === 5 && parts[3] === 'toys' && parts[4] === 'settings') {
+    const body = await readJsonBody(req);
+    const toyId = cleanId(body?.toyId);
+
+    if (!toyId) {
+      return sendJson(res, 400, { error: 'toyId is required.' });
+    }
+
+    const existing = getToySetting(room, toyId);
+    const setting = {
+      label: cleanName(body?.label) || existing.label,
+      cap: clampIntensity(body?.cap ?? existing.cap)
+    };
+
+    room.toySettings.set(toyId, setting);
+    syncControllerToyNames(room, toyId);
+    routeRoomControllerIntents(room);
     broadcastRoom(room);
     return sendJson(res, 200, serializeRoom(room));
   }
@@ -374,7 +396,7 @@ async function handleRoomRoute(req, res, url) {
   if (req.method === 'POST' && parts[5] === 'assignment') {
     const body = await readJsonBody(req);
     controller.assignedToyId = cleanId(body?.assignedToyId);
-    controller.assignedToyName = controller.assignedToyId ? cleanName(body?.assignedToyName) : '';
+    controller.assignedToyName = controller.assignedToyId ? toyDisplayName(room, controller.assignedToyId) : '';
     controller.updatedAt = new Date().toISOString();
 
     routeRoomControllerIntents(room);
@@ -552,6 +574,8 @@ async function connectRoomLovenseSocket(room, session) {
     room.lovense.deviceInfo = data?.data || data || null;
     room.lovense.appConnected = Boolean(room.lovense.deviceInfo?.online ?? true);
     room.lovense.toys = normalizeLovenseToys(room.lovense.deviceInfo?.toyList || room.lovense.deviceInfo?.toys);
+    ensureToySettings(room);
+    syncControllerToyNames(room);
     broadcastRoom(room);
     routeRoomControllerIntents(room);
   });
@@ -600,7 +624,13 @@ function routeRoomControllerIntents(room) {
     activeToyIds.add(controller.assignedToyId);
 
     if (controller.intent.mode === 'pattern' && controller.intent.pattern) {
-      const pattern = capPattern(controller.intent.pattern, clampIntensity(room.safety.intensityCap));
+      const pattern = capPattern(controller.intent.pattern, toyCap(room, controller.assignedToyId));
+      if (!pattern) {
+        sendRoomLovenseCommand(room, buildLovenseFunctionCommand('Stop', controller.assignedToyId, 0), `capped-pattern-stop:${controller.name}`);
+        room.commandState.delete(controller.assignedToyId);
+        continue;
+      }
+
       const key = `pattern:${controller.id}:${pattern.strength}:${pattern.interval}`;
       if (room.commandState.get(controller.assignedToyId)?.key === key) continue;
 
@@ -622,7 +652,7 @@ function routeRoomControllerIntents(room) {
       continue;
     }
 
-    const intensity = Math.min(clampIntensity(room.safety.intensityCap), clampIntensity(controller.intent.intensity));
+    const intensity = Math.min(toyCap(room, controller.assignedToyId), clampIntensity(controller.intent.intensity));
     const key = `level:${controller.id}:${intensity}`;
     if (room.commandState.get(controller.assignedToyId)?.key === key) continue;
 
@@ -643,12 +673,81 @@ function routeRoomControllerIntents(room) {
   }
 }
 
+function ensureToySettings(room) {
+  if (!room.toySettings) room.toySettings = new Map();
+
+  for (const toy of room.lovense?.toys || []) {
+    if (!toy.id || room.toySettings.has(toy.id)) continue;
+
+    room.toySettings.set(toy.id, {
+      label: toyDefaultLabel(toy),
+      cap: clampIntensity(room.safety?.intensityCap ?? 5)
+    });
+  }
+}
+
+function getToySetting(room, toyId) {
+  if (!room.toySettings) room.toySettings = new Map();
+  const toy = (room.lovense?.toys || []).find((candidate) => candidate.id === toyId);
+  const existing = room.toySettings.get(toyId);
+
+  if (existing) {
+    return {
+      label: cleanName(existing.label) || toyDefaultLabel(toy),
+      cap: clampIntensity(existing.cap ?? room.safety?.intensityCap ?? 5)
+    };
+  }
+
+  const setting = {
+    label: toyDefaultLabel(toy),
+    cap: clampIntensity(room.safety?.intensityCap ?? 5)
+  };
+  room.toySettings.set(toyId, setting);
+  return setting;
+}
+
+function toyCap(room, toyId) {
+  return clampIntensity(getToySetting(room, toyId).cap);
+}
+
+function toyDisplayName(room, toyId) {
+  const setting = getToySetting(room, toyId);
+  const toy = (room.lovense?.toys || []).find((candidate) => candidate.id === toyId);
+  const model = toyDefaultLabel(toy);
+
+  if (setting.label && setting.label !== model) {
+    return `${setting.label} · ${model}`;
+  }
+
+  return setting.label || model || toyId;
+}
+
+function toyDefaultLabel(toy) {
+  if (!toy) return 'Lovense toy';
+  return toy.nickname || toy.name || toy.toyType || toy.id || 'Lovense toy';
+}
+
+function syncControllerToyNames(room, onlyToyId = '') {
+  for (const controller of room.controllers.values()) {
+    if (!controller.assignedToyId) continue;
+    if (onlyToyId && controller.assignedToyId !== onlyToyId) continue;
+    const nextName = toyDisplayName(room, controller.assignedToyId);
+    if (controller.assignedToyName !== nextName) {
+      controller.assignedToyName = nextName;
+      controller.updatedAt = new Date().toISOString();
+    }
+  }
+}
+
 function capPattern(pattern, cap) {
+  const strengths = String(pattern.strength || '')
+    .split(';')
+    .map((value) => Math.min(cap, clampIntensity(value)));
+
+  if (strengths.length === 0 || strengths.every((value) => value === 0)) return null;
+
   return {
-    strength: String(pattern.strength || '')
-      .split(';')
-      .map((value) => Math.min(cap, clampIntensity(value)))
-      .join(';'),
+    strength: strengths.join(';'),
     interval: pattern.interval
   };
 }
@@ -967,6 +1066,9 @@ function normalizeLovenseToys(value) {
 }
 
 function serializeRoom(room) {
+  ensureToySettings(room);
+  syncControllerToyNames(room);
+
   return {
     id: room.id,
     hostName: room.hostName,
@@ -975,9 +1077,36 @@ function serializeRoom(room) {
       routingEnabled: Boolean(room.safety?.routingEnabled),
       intensityCap: clampIntensity(room.safety?.intensityCap ?? 5)
     },
+    toySettings: serializeToySettings(room),
     lovense: serializeRoomLovense(room.lovense),
     controllers: Array.from(room.controllers.values()).map(serializeController)
   };
+}
+
+function serializeToySettings(room) {
+  ensureToySettings(room);
+  const settings = {};
+
+  for (const toy of room.lovense?.toys || []) {
+    if (!toy.id) continue;
+    const setting = getToySetting(room, toy.id);
+    settings[toy.id] = {
+      label: setting.label,
+      cap: clampIntensity(setting.cap),
+      displayName: toyDisplayName(room, toy.id)
+    };
+  }
+
+  for (const [toyId, setting] of room.toySettings || []) {
+    if (settings[toyId]) continue;
+    settings[toyId] = {
+      label: cleanName(setting.label) || 'Lovense toy',
+      cap: clampIntensity(setting.cap),
+      displayName: cleanName(setting.label) || toyId
+    };
+  }
+
+  return settings;
 }
 
 function serializeRoomLovense(lovense = {}) {

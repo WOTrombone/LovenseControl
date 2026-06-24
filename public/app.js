@@ -47,6 +47,7 @@ testIntensity.addEventListener('input', () => {
   testIntensityOutput.textContent = `${clampIntensity(testIntensity.value)} / 20`;
 });
 toyList.addEventListener('click', handleToyListClick);
+toyList.addEventListener('change', handleToySettingsChange);
 stopToysButton.addEventListener('click', stopToys);
 createRoomButton.addEventListener('click', createRoom);
 controllersList.addEventListener('click', handleControllerAction);
@@ -741,6 +742,42 @@ async function handleControllerAssignment(event) {
   }
 }
 
+async function handleToySettingsChange(event) {
+  const input = event.target.closest('[data-toy-setting-id]');
+  if (!input || !state.room?.id) return;
+
+  const toyId = input.dataset.toySettingId;
+  const existing = toySetting(toyId);
+  const row = input.closest('.toy-item');
+  const labelInput = row?.querySelector('[data-toy-setting-field="label"]');
+  const capInput = row?.querySelector('[data-toy-setting-field="cap"]');
+
+  try {
+    const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/toys/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        toyId,
+        label: labelInput ? labelInput.value : existing.label,
+        cap: capInput ? capInput.value : existing.cap
+      })
+    }, 3000);
+    const room = await response.json();
+
+    if (!response.ok) {
+      throw new Error(room.error || 'Toy settings update failed.');
+    }
+
+    await updateRoomState(room);
+    logSdkEvent('toySettingsUpdate', {
+      toyId,
+      setting: room.toySettings?.[toyId]
+    });
+  } catch (error) {
+    logSdkEvent('toySettingsError', errorToText(error));
+  }
+}
+
 async function applyControllerIntent() {
   if (backendLovenseReady()) return;
   if (!currentSdk || !state.room || !routingEnabled.checked) return;
@@ -772,7 +809,7 @@ async function applyControllerIntent() {
     for (const controller of routes) {
       if (activeToyIds.has(controller.assignedToyId)) continue;
 
-      const desired = Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity));
+      const desired = Math.min(toyCap(controller.assignedToyId), clampIntensity(controller.intent.intensity));
       const mode = controller.intent.mode === 'pattern' ? 'pattern' : 'level';
       const previous = lastToyCommands.get(controller.assignedToyId);
 
@@ -782,7 +819,7 @@ async function applyControllerIntent() {
       if (runGeneration !== routingGeneration) return;
 
       if (mode === 'pattern') {
-        const pattern = clampPattern(controller.intent.pattern, clampIntensity(intensityCap.value));
+        const pattern = clampPattern(controller.intent.pattern, toyCap(controller.assignedToyId));
         const patternKey = pattern ? `${pattern.strength}:${pattern.interval}` : '';
         const shouldSendPattern = pattern
           && (!previous
@@ -1249,21 +1286,48 @@ function backendLovenseReady() {
 function renderToy(toy) {
   const item = document.createElement('div');
   item.className = 'toy-item';
+  const setting = toySetting(toy.id);
 
   const info = document.createElement('div');
   info.className = 'toy-info';
 
   const name = document.createElement('strong');
-  name.textContent = toy.nickname || toy.name || toy.toyType || 'Lovense toy';
+  name.textContent = setting.displayName || toyLabel(toy);
 
   const details = document.createElement('span');
   details.textContent = [
+    toyModelLabel(toy),
     toy.connected ? 'online' : 'offline',
     formatBattery(toy.battery),
+    `cap ${setting.cap}/20`,
     toy.id ? `id ${toy.id}` : null
   ].filter(Boolean).join(' · ');
 
-  info.append(name, details);
+  const settings = document.createElement('div');
+  settings.className = 'toy-settings';
+
+  const labelWrap = document.createElement('label');
+  labelWrap.textContent = 'Label';
+  const labelInput = document.createElement('input');
+  labelInput.value = setting.label || toyLabel(toy);
+  labelInput.placeholder = 'Clit, Pussy, Ass, custom...';
+  labelInput.dataset.toySettingId = toy.id;
+  labelInput.dataset.toySettingField = 'label';
+  labelWrap.append(labelInput);
+
+  const capWrap = document.createElement('label');
+  capWrap.textContent = 'Cap';
+  const capInput = document.createElement('input');
+  capInput.type = 'number';
+  capInput.min = '0';
+  capInput.max = '20';
+  capInput.value = setting.cap;
+  capInput.dataset.toySettingId = toy.id;
+  capInput.dataset.toySettingField = 'cap';
+  capWrap.append(capInput);
+
+  settings.append(labelWrap, capWrap);
+  info.append(name, details, settings);
 
   const actions = document.createElement('div');
   actions.className = 'button-row';
@@ -1289,7 +1353,32 @@ function toyById(toyId) {
 }
 
 function toyLabel(toy) {
+  if (!toy) return 'Lovense toy';
+  const setting = toySetting(toy.id);
+  return setting.displayName || setting.label || toy.nickname || toy.name || toy.toyType || toy.id || 'Lovense toy';
+}
+
+function toyModelLabel(toy) {
+  if (!toy) return '';
   return toy.nickname || toy.name || toy.toyType || toy.id || 'Lovense toy';
+}
+
+function toySetting(toyId) {
+  const setting = state.room?.toySettings?.[toyId] || {};
+  const toy = toyById(toyId);
+  const label = setting.label || toyModelLabel(toy);
+  const cap = clampIntensity(setting.cap ?? intensityCap.value);
+  const displayName = setting.displayName || label || toyModelLabel(toy);
+
+  return {
+    label,
+    cap,
+    displayName
+  };
+}
+
+function toyCap(toyId) {
+  return toySetting(toyId).cap;
 }
 
 function summarizeToyTargets(toys) {

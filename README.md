@@ -6,13 +6,14 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.18.4: backend-socket responsiveness and host-room URL recovery stabilization.
+This is v0.19.0: per-toy safety caps and toy labels.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
 - `POST /api/rooms/:roomId/lovense/session` creates a backend-owned Lovense Socket API session for that room.
 - `POST /api/rooms/:roomId/lovense/command` sends a backend Socket API toy command for host-side tests.
 - `POST /api/rooms/:roomId/safety` stores the host's routing toggle and intensity cap for backend routing.
+- `POST /api/rooms/:roomId/toys/settings` stores a friendly label and app-level cap for a detected toy.
 - `POST /lovense/callback` accepts Lovense Standard API callback payloads for early testing.
 - The browser page can request a host session, show the backend-generated Lovense QR code, show room/socket events, request app/toy status, and send a stop command.
 - Token requests now fail with visible timeout errors instead of hanging.
@@ -32,7 +33,10 @@ This is v0.18.4: backend-socket responsiveness and host-room URL recovery stabil
 - The host can assign each controller to a detected toy.
 - Controllers can see which toy the host assigned to them.
 - Controller requests are routed through the backend Lovense socket when connected, avoiding the host browser as the live-command relay.
-- Backend socket routing respects the host's live-routing toggle and intensity cap.
+- Backend socket routing respects the host's live-routing toggle and the assigned toy's cap.
+- The old global cap remains as the default/fallback cap for newly detected toys.
+- The host can label each toy with a friendly name and set a cap per toy.
+- Controller assignment uses the friendly toy label, while the host still sees model/device details.
 - The old browser SDK/LAN routing code remains in place as a fallback path while the backend socket path is tested.
 - `STOP ALL` clears controller intents and sends backend socket stop/zero commands immediately.
 - `STOP ALL` no longer disables live routing; the host can use the live-routing checkbox as the separate pause/resume control.
@@ -40,7 +44,7 @@ This is v0.18.4: backend-socket responsiveness and host-room URL recovery stabil
 - The host page also writes the active room into the URL as `?room=...`, so refresh/back restores the exact same room instead of drifting to a different saved room.
 - If Render lost the in-memory room, the host page now reports that the saved room expired instead of showing a misleading empty room.
 
-The next decision is whether the backend Socket API path is responsive enough to become the only live routing path.
+The next decision is whether to build pattern functionality now or do another small v0.19 stabilization pass after per-toy cap testing.
 
 ## Local Setup
 
@@ -52,7 +56,7 @@ npm run dev
 
 Set `LOVENSE_DEVELOPER_TOKEN` in `.env` locally or in Render environment variables when deployed.
 
-The v0.18.x backend socket path requires `socket.io-client` 2.x because Lovense's Standard Socket API requires the 2.x Socket.IO client.
+The backend socket path requires `socket.io-client` 2.x because Lovense's Standard Socket API requires the 2.x Socket.IO client.
 
 Do not commit `.env`, Lovense developer tokens, AES keys, Render secrets, or GitHub tokens.
 
@@ -83,7 +87,7 @@ https://your-render-service.onrender.com/lovense/callback
 4. Scan the QR code in Lovense Remote.
 5. Confirm toy connection/callback behavior.
 6. Create a controller room and approve a controller.
-7. Test controller requests with the host cap low.
-8. Test whether backend socket routing improves slider/STOP responsiveness.
-9. If responsiveness is acceptable, simplify the host/controller UI around this path.
-10. Add toy labels, solo mode, and then repeatable pattern editing.
+7. Set different per-toy caps and labels.
+8. Assign controllers to labeled toys.
+9. Confirm backend routing enforces each assigned toy's cap.
+10. Move to pattern functionality after per-toy cap behavior is confirmed.

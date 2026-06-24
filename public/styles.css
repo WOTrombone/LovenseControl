@@ -698,6 +698,17 @@ button:disabled {
   gap: 3px;
 }
 
+.toy-settings {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 88px;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.toy-settings label {
+  gap: 4px;
+}
+
 .toy-item strong {
   color: var(--text);
 }
@@ -760,6 +771,11 @@ pre {
   .toy-item {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .toy-settings {
+    grid-template-columns: 1fr;
+    width: 100%;
   }
 
   .controller-preview {
