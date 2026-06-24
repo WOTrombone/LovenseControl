@@ -22,11 +22,14 @@ let controllerId = '';
 let pollTimer;
 let roomSocket;
 let sendTimer;
-let gestureQueue = [];
+let pendingLevel = null;
+let levelSendInFlight = false;
+let lastLevelSentAt = 0;
 let approved = false;
 let revoked = false;
 let controlsEnabled = false;
 let controlMode = 'level';
+const liveSendIntervalMs = 120;
 
 nameInput.value = defaultName;
 title.textContent = defaultName;
@@ -39,7 +42,7 @@ nameInput.addEventListener('input', () => {
 requestButton.addEventListener('click', requestAccess);
 intensity.addEventListener('input', () => {
   renderIntensity();
-  queueGestureSample();
+  scheduleLiveLevel();
 });
 releaseStop.addEventListener('click', stopSending);
 liveMode.addEventListener('click', useLiveMode);
@@ -176,18 +179,23 @@ function renderState() {
   }
 }
 
-function queueGestureSample() {
+function scheduleLiveLevel(immediate = false) {
   if (!controlsEnabled) return;
   controlMode = 'level';
   renderMode();
-  gestureQueue.push({
-    intensity: Number(intensity.value || 0),
-    sentAt: new Date().toISOString()
-  });
-  gestureQueue = gestureQueue.slice(-80);
+  pendingLevel = clampIntensity(intensity.value);
 
-  if (!sendTimer) {
-    sendTimer = setTimeout(flushGestureQueue, 90);
+  if (immediate) {
+    if (sendTimer) clearTimeout(sendTimer);
+    sendTimer = undefined;
+    sendLatestLevel();
+    return;
+  }
+
+  if (!sendTimer && !levelSendInFlight) {
+    const elapsed = Date.now() - lastLevelSentAt;
+    const delay = Math.max(0, liveSendIntervalMs - elapsed);
+    sendTimer = setTimeout(sendLatestLevel, delay);
   }
 }
 
@@ -195,23 +203,19 @@ async function sendCurrentLevel() {
   if (!controlsEnabled) return;
   controlMode = 'level';
   renderMode();
-  queueGestureSample();
-  await flushGestureQueue();
+  pendingLevel = clampIntensity(intensity.value);
+  await sendLatestLevel();
 }
 
 async function stopSending() {
   if (!approved && !controlsEnabled) return;
   if (sendTimer) clearTimeout(sendTimer);
   sendTimer = undefined;
+  pendingLevel = null;
   controlMode = 'level';
   intensity.value = '0';
   renderIntensity();
   renderMode();
-  gestureQueue = [{
-    intensity: 0,
-    sentAt: new Date().toISOString()
-  }];
-  await flushGestureQueue();
   await sendIntent(false, {
     mode: 'level'
   });
@@ -228,7 +232,7 @@ async function usePulseMode() {
   if (!controlsEnabled) return;
   if (sendTimer) clearTimeout(sendTimer);
   sendTimer = undefined;
-  gestureQueue = [];
+  pendingLevel = null;
   controlMode = 'pattern';
   renderMode();
   await sendIntent(true, {
@@ -244,7 +248,7 @@ async function useChaosMode() {
   if (!controlsEnabled) return;
   if (sendTimer) clearTimeout(sendTimer);
   sendTimer = undefined;
-  gestureQueue = [];
+  pendingLevel = null;
   controlMode = 'chaos';
   renderMode();
   await sendIntent(true, {
@@ -266,7 +270,7 @@ async function sendIntent(active, options = {}) {
       body: JSON.stringify({
         active,
         mode: options.mode || controlMode,
-        intensity: active ? Number(intensity.value || 0) : 0,
+        intensity: active ? clampIntensity(options.intensity ?? intensity.value) : 0,
         pattern: options.pattern || null
       })
     }, 10000);
@@ -276,25 +280,30 @@ async function sendIntent(active, options = {}) {
   }
 }
 
-async function flushGestureQueue() {
+async function sendLatestLevel() {
   if (sendTimer) {
     clearTimeout(sendTimer);
     sendTimer = undefined;
   }
-  if (!controlsEnabled || !roomId || !controllerId || gestureQueue.length === 0) return;
+  if (!controlsEnabled || !roomId || !controllerId || pendingLevel === null || levelSendInFlight) return;
 
-  const samples = gestureQueue.splice(0, 30);
-
+  const level = pendingLevel;
+  pendingLevel = null;
+  levelSendInFlight = true;
+  lastLevelSentAt = Date.now();
   try {
-    await fetchWithTimeout(`/api/rooms/${roomId}/controllers/${controllerId}/gesture`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ samples })
+    await sendIntent(level > 0, {
+      mode: 'level',
+      intensity: level
     }, 10000);
   } catch (error) {
-    gestureQueue = samples.concat(gestureQueue).slice(-80);
     statusText.textContent = 'Send failed';
     note.textContent = errorToText(error);
+  } finally {
+    levelSendInFlight = false;
+    if (pendingLevel !== null && controlsEnabled) {
+      scheduleLiveLevel();
+    }
   }
 }
 
@@ -304,6 +313,7 @@ function setControlEnabled(enabled) {
     clearTimeout(sendTimer);
     sendTimer = undefined;
   }
+  if (!enabled) pendingLevel = null;
   intensity.disabled = !enabled;
   releaseStop.disabled = !enabled;
   liveMode.disabled = !enabled;
@@ -354,6 +364,12 @@ function cleanId(value) {
 
 function cleanName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 64);
+}
+
+function clampIntensity(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(20, Math.round(number)));
 }
 
 function errorToText(error) {

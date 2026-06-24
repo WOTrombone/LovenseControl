@@ -6,12 +6,15 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.16: low-latency LAN-first routing with hard STOP.
+This is v0.18: backend-socket responsiveness spike.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
+- `POST /api/rooms/:roomId/lovense/session` creates a backend-owned Lovense Socket API session for that room.
+- `POST /api/rooms/:roomId/lovense/command` sends a backend Socket API toy command for host-side tests.
+- `POST /api/rooms/:roomId/safety` stores the host's routing toggle and intensity cap for backend routing.
 - `POST /lovense/callback` accepts Lovense Standard API callback payloads for early testing.
-- The browser page can request a host session, ask the Lovense Standard JS SDK for a QR code, show SDK events, request app/toy status, and send a stop command.
+- The browser page can request a host session, show the backend-generated Lovense QR code, show room/socket events, request app/toy status, and send a stop command.
 - Token requests now fail with visible timeout errors instead of hanging.
 - The top of the page now shows host-facing status cards and safety controls.
 - `STOP ALL` is visible as soon as the SDK session exists.
@@ -19,17 +22,21 @@ This is v0.16: low-latency LAN-first routing with hard STOP.
 - Diagnostics are tucked behind a collapsible panel.
 - The host can create an in-memory controller room and copy a controller invite link.
 - `/controller.html` lets a controller request access, wait for host approval, see the assigned toy, and use a mobile control-room style vertical live intensity slider.
-- Fast slider wiggles are sent as queued gesture samples so the host can replay them to the assigned toy instead of collapsing them to the latest level.
+- Fast slider wiggles collapse to the latest live level so the toy does not play delayed old slider positions.
+- Slider input is coalesced on the controller page, so only the newest live level waits behind an in-flight send.
 - Host and controller pages receive room updates over WebSocket instead of relying on the old 250ms host polling loop.
 - Routed live vibration commands use indefinite `time: 0` commands instead of two-second command windows.
 - When Lovense Remote reports a LAN endpoint, routed vibration prefers the local `https://{domain}:{httpsPort}/command` API and falls back to the Standard JS SDK if LAN fails.
-- `STOP ALL` cancels any in-progress gesture replay, clears the room's controller queues, disables live routing, and sends a parallel hard-stop burst over both LAN and the Standard JS SDK.
-- Controller stop/inactive requests clear queued gesture samples on the server.
+- `STOP ALL` clears the room's controller queues, disables live routing, and sends a parallel hard-stop burst over both LAN and the Standard JS SDK.
+- Controller stop/inactive requests clear any stale live samples on the server.
 - The host can assign each controller to a detected toy.
 - Controllers can see which toy the host assigned to them.
-- Controller requests are routed through the host page to the assigned toy only, where the host's routing toggle, intensity cap, and STOP ALL remain in control.
+- Controller requests are routed through the backend Lovense socket when connected, avoiding the host browser as the live-command relay.
+- Backend socket routing respects the host's live-routing toggle and intensity cap.
+- The old browser SDK/LAN routing code remains in place as a fallback path while the backend socket path is tested.
+- `STOP ALL` clears controller intents and sends backend socket stop/zero commands immediately.
 
-Repeating pattern controls come next.
+The next decision is whether the backend Socket API path is responsive enough to become the only live routing path.
 
 ## Local Setup
 
@@ -40,6 +47,8 @@ npm run dev
 ```
 
 Set `LOVENSE_DEVELOPER_TOKEN` in `.env` locally or in Render environment variables when deployed.
+
+The v0.18 backend socket path requires `socket.io-client` 2.x because Lovense's Standard Socket API requires the 2.x Socket.IO client.
 
 Do not commit `.env`, Lovense developer tokens, AES keys, Render secrets, or GitHub tokens.
 
@@ -71,4 +80,6 @@ https://your-render-service.onrender.com/lovense/callback
 5. Confirm toy connection/callback behavior.
 6. Create a controller room and approve a controller.
 7. Test controller requests with the host cap low.
-8. Add a repeatable pattern editor with STOP ALL as the hard override.
+8. Test whether backend socket routing improves slider/STOP responsiveness.
+9. If responsiveness is acceptable, simplify the host/controller UI around this path.
+10. Add toy labels, solo mode, and then repeatable pattern editing.

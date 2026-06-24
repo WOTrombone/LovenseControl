@@ -19,6 +19,7 @@ const callbackEvents = [];
 const lovenseRequestTimeoutMs = 10000;
 const rooms = new Map();
 const roomSocketClients = new Map();
+let socketIoClientPromise;
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -28,9 +29,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         service: 'LovenseControl',
-        version: '0.16.0',
+        version: '0.18.0',
         hasLovenseToken: Boolean(lovenseDeveloperToken),
-        platform: lovensePlatform
+        platform: lovensePlatform,
+        backendSocketRouting: true
       });
     }
 
@@ -138,31 +140,12 @@ async function handleLovenseToken(req, res) {
   const uname = cleanName(body?.uname) || 'Host';
 
   try {
-    const lovenseResponse = await fetchWithTimeout(`${lovenseApiBase}/api/basicApi/getToken`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token: lovenseDeveloperToken,
-        uid,
-        uname
-      })
-    }, lovenseRequestTimeoutMs);
-
-    const data = await lovenseResponse.json().catch(() => null);
-
-    if (!lovenseResponse.ok || data?.code !== 0) {
-      return sendJson(res, 502, {
-        error: 'Lovense token request failed.',
-        status: lovenseResponse.status,
-        lovense: data
-      });
-    }
-
+    const data = await requestLovenseToken(uid, uname);
     return sendJson(res, 200, {
       uid,
       uname,
       platform: lovensePlatform,
-      authToken: data.data?.authToken
+      authToken: data.authToken
     });
   } catch (error) {
     return sendJson(res, error?.name === 'AbortError' ? 504 : 502, {
@@ -179,7 +162,23 @@ async function handleCreateRoom(req, res) {
     id: roomId,
     hostName: cleanName(body?.hostName) || 'Host',
     createdAt: new Date().toISOString(),
-    controllers: new Map()
+    controllers: new Map(),
+    commandState: new Map(),
+    safety: {
+      routingEnabled: false,
+      intensityCap: 5
+    },
+    lovense: {
+      uid: '',
+      uname: '',
+      socketStatus: 'not connected',
+      socketError: '',
+      qrcode: null,
+      deviceInfo: null,
+      appConnected: false,
+      appOnline: false,
+      toys: []
+    }
   };
 
   rooms.set(roomId, room);
@@ -201,22 +200,51 @@ async function handleRoomRoute(req, res, url) {
   }
 
   if (req.method === 'POST' && parts.length === 4 && parts[3] === 'stop') {
-    const stoppedAt = new Date().toISOString();
+    stopRoomControllerIntents(room);
+    room.safety.routingEnabled = false;
+    sendHardStopFromRoom(room, 'room-stop');
+    broadcastRoom(room);
+    return sendJson(res, 200, serializeRoom(room));
+  }
 
-    for (const controller of room.controllers.values()) {
-      controller.intent = {
-        active: false,
-        mode: 'level',
-        intensity: 0,
-        pattern: null,
-        updatedAt: stoppedAt
-      };
-      controller.gestureEvents = [];
-      controller.updatedAt = stoppedAt;
+  if (req.method === 'POST' && parts.length === 4 && parts[3] === 'safety') {
+    const body = await readJsonBody(req);
+    const wasEnabled = room.safety.routingEnabled;
+    room.safety.routingEnabled = Boolean(body?.routingEnabled);
+    room.safety.intensityCap = clampIntensity(body?.intensityCap ?? room.safety.intensityCap);
+
+    if (wasEnabled && !room.safety.routingEnabled) {
+      stopRoomControllerIntents(room);
+      sendHardStopFromRoom(room, 'routing-disabled');
+    } else {
+      routeRoomControllerIntents(room);
     }
 
     broadcastRoom(room);
     return sendJson(res, 200, serializeRoom(room));
+  }
+
+  if (parts[3] === 'lovense') {
+    if (req.method === 'POST' && parts.length === 5 && parts[4] === 'session') {
+      return handleRoomLovenseSession(req, res, room);
+    }
+
+    if (req.method === 'POST' && parts.length === 5 && parts[4] === 'command') {
+      const body = await readJsonBody(req);
+      const toyId = cleanId(body?.toyId);
+      const action = cleanLovenseAction(body?.action) || 'Vibrate:1';
+      const timeSec = clampCommandTime(body?.timeSec, 2);
+      const command = buildLovenseFunctionCommand(action, toyId, timeSec);
+      const result = sendRoomLovenseCommand(room, command, 'manual-command');
+
+      if (!result.ok) {
+        return sendJson(res, 409, result);
+      }
+
+      return sendJson(res, 200, result);
+    }
+
+    return sendJson(res, 404, { error: 'Not found', path: url.pathname });
   }
 
   if (parts[3] !== 'controllers') {
@@ -277,13 +305,11 @@ async function handleRoomRoute(req, res, url) {
       pattern: active ? pattern : null,
       updatedAt: new Date().toISOString()
     };
+    controller.gestureEvents = [];
     controller.connected = true;
     controller.updatedAt = new Date().toISOString();
 
-    if (!active) {
-      controller.gestureEvents = [];
-    }
-
+    routeRoomControllerIntents(room);
     broadcastRoom(room);
     return sendJson(res, 200, serializeController(controller));
   }
@@ -292,23 +318,21 @@ async function handleRoomRoute(req, res, url) {
     const body = await readJsonBody(req);
     const rawSamples = Array.isArray(body?.samples) ? body.samples : [];
     const now = new Date().toISOString();
-    const samples = rawSamples.slice(-30).map((sample) => ({
-      id: controller.nextGestureId++,
-      intensity: clampIntensity(sample?.intensity),
-      sentAt: cleanTimestamp(sample?.sentAt) || now
-    }));
+    const latestRawSample = rawSamples[rawSamples.length - 1];
 
-    if (samples.length === 0) {
+    if (!latestRawSample) {
       return sendJson(res, 400, { error: 'No gesture samples supplied.' });
     }
 
-    controller.gestureEvents.push(...samples);
-    controller.gestureEvents = controller.gestureEvents.slice(-120);
-
-    const latest = samples[samples.length - 1];
+    const latest = {
+      id: controller.nextGestureId++,
+      intensity: clampIntensity(latestRawSample?.intensity),
+      sentAt: cleanTimestamp(latestRawSample?.sentAt) || now
+    };
+    controller.gestureEvents = [];
     controller.intent = {
       active: latest.intensity > 0,
-      mode: 'gesture',
+      mode: 'level',
       intensity: latest.intensity,
       pattern: null,
       updatedAt: now
@@ -316,10 +340,12 @@ async function handleRoomRoute(req, res, url) {
     controller.connected = true;
     controller.updatedAt = now;
 
+    routeRoomControllerIntents(room);
     broadcastRoom(room);
     return sendJson(res, 200, {
       ok: true,
-      accepted: samples.length,
+      accepted: rawSamples.length,
+      collapsedToLatest: true,
       latest,
       controller: serializeController(controller)
     });
@@ -341,6 +367,7 @@ async function handleRoomRoute(req, res, url) {
     }
     controller.updatedAt = new Date().toISOString();
 
+    routeRoomControllerIntents(room);
     broadcastRoom(room);
     return sendJson(res, 200, serializeController(controller));
   }
@@ -351,11 +378,344 @@ async function handleRoomRoute(req, res, url) {
     controller.assignedToyName = controller.assignedToyId ? cleanName(body?.assignedToyName) : '';
     controller.updatedAt = new Date().toISOString();
 
+    routeRoomControllerIntents(room);
     broadcastRoom(room);
     return sendJson(res, 200, serializeController(controller));
   }
 
   return sendJson(res, 404, { error: 'Not found', path: url.pathname });
+}
+
+async function requestLovenseToken(uid, uname) {
+  const lovenseResponse = await fetchWithTimeout(`${lovenseApiBase}/api/basicApi/getToken`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: lovenseDeveloperToken,
+      uid,
+      uname
+    })
+  }, lovenseRequestTimeoutMs);
+
+  const data = await lovenseResponse.json().catch(() => null);
+
+  if (!lovenseResponse.ok || data?.code !== 0 || !data?.data?.authToken) {
+    const error = new Error('Lovense token request failed.');
+    error.status = lovenseResponse.status;
+    error.lovense = data;
+    throw error;
+  }
+
+  return {
+    uid,
+    uname,
+    authToken: data.data.authToken
+  };
+}
+
+async function requestLovenseSocketInfo(authToken) {
+  const lovenseResponse = await fetchWithTimeout(`${lovenseApiBase}/api/basicApi/getSocketUrl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      platform: lovensePlatform,
+      authToken
+    })
+  }, lovenseRequestTimeoutMs);
+
+  const data = await lovenseResponse.json().catch(() => null);
+
+  if (!lovenseResponse.ok || data?.code !== 0 || !data?.data?.socketIoUrl || !data?.data?.socketIoPath) {
+    const error = new Error('Lovense socket URL request failed.');
+    error.status = lovenseResponse.status;
+    error.lovense = data;
+    throw error;
+  }
+
+  return data.data;
+}
+
+async function handleRoomLovenseSession(req, res, room) {
+  if (!lovenseDeveloperToken) {
+    return sendJson(res, 500, {
+      error: 'LOVENSE_DEVELOPER_TOKEN is not configured on the server.'
+    });
+  }
+
+  const body = await readJsonBody(req);
+  const uid = cleanId(body?.uid) || `host-${room.id}`;
+  const uname = cleanName(body?.uname) || room.hostName || 'Host';
+
+  try {
+    const token = await requestLovenseToken(uid, uname);
+    const socketInfo = await requestLovenseSocketInfo(token.authToken);
+    await connectRoomLovenseSocket(room, {
+      uid,
+      uname,
+      authToken: token.authToken,
+      socketIoPath: socketInfo.socketIoPath,
+      socketIoUrl: socketInfo.socketIoUrl
+    });
+
+    return sendJson(res, 200, serializeRoom(room));
+  } catch (error) {
+    room.lovense.socketStatus = 'error';
+    room.lovense.socketError = error instanceof Error ? error.message : String(error);
+    broadcastRoom(room);
+
+    return sendJson(res, error?.name === 'AbortError' ? 504 : 502, {
+      error: room.lovense.socketError,
+      status: error?.status,
+      lovense: error?.lovense
+    });
+  }
+}
+
+async function connectRoomLovenseSocket(room, session) {
+  const io = await loadSocketIoClient();
+
+  if (room.lovense.socket?.disconnect) {
+    room.lovense.socket.disconnect();
+  } else if (room.lovense.socket?.close) {
+    room.lovense.socket.close();
+  }
+
+  room.lovense = {
+    ...room.lovense,
+    uid: session.uid,
+    uname: session.uname,
+    authToken: session.authToken,
+    socketStatus: 'connecting',
+    socketError: '',
+    qrcode: null,
+    deviceInfo: null,
+    appConnected: false,
+    appOnline: false,
+    toys: []
+  };
+  broadcastRoom(room);
+
+  const socket = io(session.socketIoUrl, {
+    path: session.socketIoPath,
+    transports: ['websocket'],
+    forceNew: true,
+    reconnection: true
+  });
+
+  room.lovense.socket = socket;
+
+  socket.on('connect', () => {
+    room.lovense.socketStatus = 'connected';
+    room.lovense.socketError = '';
+    socket.emit('basicapi_get_qrcode_ts', {
+      ackId: `qr-${room.id}-${Date.now()}`
+    });
+    broadcastRoom(room);
+  });
+
+  socket.on('disconnect', (reason) => {
+    room.lovense.socketStatus = 'disconnected';
+    room.lovense.socketError = String(reason || '');
+    broadcastRoom(room);
+  });
+
+  socket.on('connect_error', (error) => {
+    room.lovense.socketStatus = 'error';
+    room.lovense.socketError = errorToText(error);
+    broadcastRoom(room);
+  });
+
+  socket.on('basicapi_get_qrcode_tc', (payload) => {
+    const data = parseLovenseSocketPayload(payload);
+    room.lovense.qrcode = data?.data || data || null;
+    broadcastRoom(room);
+  });
+
+  socket.on('basicapi_update_device_info_tc', (payload) => {
+    const data = parseLovenseSocketPayload(payload);
+    room.lovense.deviceInfo = data?.data || data || null;
+    room.lovense.appConnected = Boolean(room.lovense.deviceInfo?.online ?? true);
+    room.lovense.toys = normalizeLovenseToys(room.lovense.deviceInfo?.toyList || room.lovense.deviceInfo?.toys);
+    broadcastRoom(room);
+    routeRoomControllerIntents(room);
+  });
+
+  socket.on('basicapi_update_app_status_tc', (payload) => {
+    const data = parseLovenseSocketPayload(payload);
+    room.lovense.appConnected = Boolean(data?.data ?? data);
+    broadcastRoom(room);
+  });
+
+  socket.on('basicapi_update_app_online_tc', (payload) => {
+    const data = parseLovenseSocketPayload(payload);
+    room.lovense.appOnline = Boolean(data?.data ?? data);
+    broadcastRoom(room);
+  });
+}
+
+async function loadSocketIoClient() {
+  if (!socketIoClientPromise) {
+    socketIoClientPromise = import('socket.io-client').then((module) => module.default || module);
+  }
+
+  return socketIoClientPromise;
+}
+
+function routeRoomControllerIntents(room) {
+  if (!room.lovense?.socket || room.lovense.socketStatus !== 'connected') return;
+  if (!room.safety?.routingEnabled) return;
+
+  const onlineToyIds = new Set((room.lovense.toys || [])
+    .filter((toy) => toy.connected)
+    .map((toy) => toy.id)
+    .filter(Boolean));
+  const activeToyIds = new Set();
+
+  for (const controller of room.controllers.values()) {
+    if (!controller.approved
+      || controller.revoked
+      || !controller.assignedToyId
+      || !onlineToyIds.has(controller.assignedToyId)
+      || !controller.intent?.active) {
+      continue;
+    }
+
+    if (activeToyIds.has(controller.assignedToyId)) continue;
+    activeToyIds.add(controller.assignedToyId);
+
+    if (controller.intent.mode === 'pattern' && controller.intent.pattern) {
+      const pattern = capPattern(controller.intent.pattern, clampIntensity(room.safety.intensityCap));
+      const key = `pattern:${controller.id}:${pattern.strength}:${pattern.interval}`;
+      if (room.commandState.get(controller.assignedToyId)?.key === key) continue;
+
+      const command = {
+        command: 'Pattern',
+        rule: 'V:1;F:v;S:' + pattern.strength,
+        strength: pattern.strength,
+        timeSec: 0,
+        toy: controller.assignedToyId,
+        apiVer: 2
+      };
+      const result = sendRoomLovenseCommand(room, command, `pattern:${controller.name}`);
+      if (result.ok) {
+        room.commandState.set(controller.assignedToyId, {
+          key,
+          at: Date.now()
+        });
+      }
+      continue;
+    }
+
+    const intensity = Math.min(clampIntensity(room.safety.intensityCap), clampIntensity(controller.intent.intensity));
+    const key = `level:${controller.id}:${intensity}`;
+    if (room.commandState.get(controller.assignedToyId)?.key === key) continue;
+
+    const result = sendRoomLovenseCommand(room, buildLovenseFunctionCommand(`Vibrate:${intensity}`, controller.assignedToyId, 0), `level:${controller.name}`);
+    if (result.ok) {
+      room.commandState.set(controller.assignedToyId, {
+        key,
+        at: Date.now()
+      });
+    }
+  }
+
+  for (const [toyId] of room.commandState) {
+    if (!activeToyIds.has(toyId)) {
+      sendRoomLovenseCommand(room, buildLovenseFunctionCommand('Stop', toyId, 0), 'auto-stop-inactive-toy');
+      room.commandState.delete(toyId);
+    }
+  }
+}
+
+function capPattern(pattern, cap) {
+  return {
+    strength: String(pattern.strength || '')
+      .split(';')
+      .map((value) => Math.min(cap, clampIntensity(value)))
+      .join(';'),
+    interval: pattern.interval
+  };
+}
+
+function stopRoomControllerIntents(room) {
+  const stoppedAt = new Date().toISOString();
+
+  for (const controller of room.controllers.values()) {
+    controller.intent = {
+      active: false,
+      mode: 'level',
+      intensity: 0,
+      pattern: null,
+      updatedAt: stoppedAt
+    };
+    controller.gestureEvents = [];
+    controller.updatedAt = stoppedAt;
+  }
+
+  room.commandState.clear();
+}
+
+function sendHardStopFromRoom(room, reason) {
+  const toyIds = (room.lovense?.toys || []).map((toy) => toy.id).filter(Boolean);
+  const targets = ['', ...toyIds];
+
+  for (const toyId of targets) {
+    sendRoomLovenseCommand(room, buildLovenseFunctionCommand('Stop', toyId, 0), reason);
+    sendRoomLovenseCommand(room, buildLovenseFunctionCommand('Vibrate:0', toyId, 0), reason);
+  }
+}
+
+function sendRoomLovenseCommand(room, command, reason) {
+  if (!room.lovense?.socket || room.lovense.socketStatus !== 'connected') {
+    return {
+      ok: false,
+      error: 'Lovense backend socket is not connected.'
+    };
+  }
+
+  try {
+    room.lovense.socket.emit('basicapi_send_toy_command_ts', command);
+    room.lovense.lastCommand = {
+      reason,
+      command,
+      sentAt: new Date().toISOString()
+    };
+    broadcastRoom(room);
+    return {
+      ok: true,
+      path: 'backend-socket',
+      reason,
+      command
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: errorToText(error)
+    };
+  }
+}
+
+function buildLovenseFunctionCommand(action, toyId = '', timeSec = 0) {
+  const command = {
+    command: 'Function',
+    action,
+    timeSec,
+    stopPrevious: 1,
+    apiVer: 1
+  };
+
+  if (toyId) command.toy = toyId;
+  return command;
+}
+
+function parseLovenseSocketPayload(payload) {
+  if (typeof payload !== 'string') return payload;
+
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return payload;
+  }
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {
@@ -557,12 +917,74 @@ function cleanPattern(value) {
   };
 }
 
+function cleanLovenseAction(value) {
+  if (typeof value !== 'string') return '';
+  const cleaned = value.trim().replace(/[^a-zA-Z0-9:,_-]/g, '').slice(0, 256);
+  if (!cleaned) return '';
+  if (cleaned === 'Stop') return cleaned;
+  if (/^(Vibrate|Rotate|Pump|Thrusting|Fingering|Suction|Depth|Stroke|Oscillate|All):([0-9]|1[0-9]|20)(,(Vibrate|Rotate|Pump|Thrusting|Fingering|Suction|Depth|Stroke|Oscillate|All):([0-9]|1[0-9]|20))*$/.test(cleaned)) {
+    return cleaned;
+  }
+  return '';
+}
+
+function clampCommandTime(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(3600, Math.round(number)));
+}
+
+function normalizeLovenseToys(value) {
+  if (!value) return [];
+  const toys = Array.isArray(value) ? value : Object.values(value);
+
+  return toys.map((toy) => ({
+    id: cleanId(toy?.id),
+    name: cleanName(toy?.name),
+    toyType: cleanName(toy?.toyType),
+    nickname: cleanName(toy?.nickname || toy?.nickName),
+    fVersion: toy?.fVersion ?? '',
+    hVersion: toy?.hVersion ?? '',
+    battery: Number.isFinite(Number(toy?.battery)) ? Number(toy.battery) : null,
+    connected: Boolean(toy?.connected || toy?.status === '1' || toy?.status === 1)
+  })).filter((toy) => toy.id || toy.name || toy.toyType);
+}
+
 function serializeRoom(room) {
   return {
     id: room.id,
     hostName: room.hostName,
     createdAt: room.createdAt,
+    safety: {
+      routingEnabled: Boolean(room.safety?.routingEnabled),
+      intensityCap: clampIntensity(room.safety?.intensityCap ?? 5)
+    },
+    lovense: serializeRoomLovense(room.lovense),
     controllers: Array.from(room.controllers.values()).map(serializeController)
+  };
+}
+
+function serializeRoomLovense(lovense = {}) {
+  return {
+    uid: lovense.uid || '',
+    uname: lovense.uname || '',
+    socketStatus: lovense.socketStatus || 'not connected',
+    socketError: lovense.socketError || '',
+    qrcode: lovense.qrcode || null,
+    deviceInfo: lovense.deviceInfo ? {
+      deviceCode: lovense.deviceInfo.deviceCode,
+      online: lovense.deviceInfo.online,
+      domain: lovense.deviceInfo.domain,
+      httpsPort: lovense.deviceInfo.httpsPort,
+      wssPort: lovense.deviceInfo.wssPort,
+      appVersion: lovense.deviceInfo.appVersion,
+      platform: lovense.deviceInfo.platform,
+      appType: lovense.deviceInfo.appType
+    } : null,
+    appConnected: Boolean(lovense.appConnected),
+    appOnline: Boolean(lovense.appOnline),
+    toys: lovense.toys || [],
+    lastCommand: lovense.lastCommand || null
   };
 }
 
@@ -591,6 +1013,10 @@ function summarizeToys(toys) {
     nickName: cleanName(toy?.nickName),
     status: toy?.status
   }));
+}
+
+function errorToText(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function loadDotEnv() {

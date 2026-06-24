@@ -50,8 +50,10 @@ stopToysButton.addEventListener('click', stopToys);
 createRoomButton.addEventListener('click', createRoom);
 controllersList.addEventListener('click', handleControllerAction);
 controllersList.addEventListener('change', handleControllerAssignment);
+intensityCap.addEventListener('change', updateRoomSafety);
 routingEnabled.addEventListener('change', () => {
   logSdkEvent('routingEnabledChange', routingEnabled.checked);
+  updateRoomSafety();
   if (!routingEnabled.checked) stopToys();
 });
 
@@ -85,7 +87,7 @@ async function loadCallbacks() {
 
 async function createHostSession(event) {
   event.preventDefault();
-  tokenOutput.textContent = 'Creating Lovense auth token...';
+  tokenOutput.textContent = 'Creating backend Lovense socket session...';
   qrOutput.hidden = true;
   qrOutput.replaceChildren();
   sdkEvents.length = 0;
@@ -107,7 +109,8 @@ async function createHostSession(event) {
   logSdkEvent('hostSessionRequested', payload);
 
   try {
-    const response = await fetchWithTimeout('/api/lovense/token', {
+    const room = await ensureRoom(payload.uname || 'Host');
+    const response = await fetchWithTimeout(`/api/rooms/${room.id}/lovense/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -119,14 +122,17 @@ async function createHostSession(event) {
       return;
     }
 
+    await updateRoomState(data);
     tokenOutput.textContent = JSON.stringify({
-      uid: data.uid,
-      uname: data.uname,
-      platform: data.platform,
-      authToken: data.authToken ? '[received]' : '[missing]'
+      uid: data.lovense?.uid,
+      uname: data.lovense?.uname,
+      platform: 'Lovense Multiple Control',
+      route: 'backend-socket',
+      socketStatus: data.lovense?.socketStatus,
+      authToken: '[server only]'
     }, null, 2);
 
-    await renderLovenseQr(data);
+    renderBackendLovenseQr(data.lovense);
   } catch (error) {
     tokenOutput.textContent = error instanceof Error ? error.message : String(error);
     logSdkEvent('tokenRequestError', errorToText(error));
@@ -215,7 +221,45 @@ async function renderLovenseQr({ uid, platform, authToken }) {
   });
 }
 
+function renderBackendLovenseQr(lovense) {
+  qrOutput.hidden = false;
+
+  if (!lovense) {
+    qrOutput.textContent = 'Waiting for backend Lovense session...';
+    return;
+  }
+
+  if (lovense.qrcode?.qrcodeUrl) {
+    const img = document.createElement('img');
+    img.alt = 'Lovense Remote QR code';
+    img.src = lovense.qrcode.qrcodeUrl;
+
+    const code = document.createElement('pre');
+    code.textContent = JSON.stringify({
+      code: lovense.qrcode.code,
+      qrcode: lovense.qrcode.qrcode,
+      qrcodeUrl: lovense.qrcode.qrcodeUrl
+    }, null, 2);
+
+    qrOutput.replaceChildren(img, code);
+    return;
+  }
+
+  qrOutput.textContent = JSON.stringify({
+    route: 'backend-socket',
+    socketStatus: lovense.socketStatus,
+    socketError: lovense.socketError || null,
+    message: 'Waiting for QR code from Lovense socket...'
+  }, null, 2);
+}
+
 async function checkAppStatus() {
+  if (!currentSdk && state.room?.lovense) {
+    syncLovenseRoomState(state.room);
+    logSdkEvent('getAppStatus', state.room.lovense.appConnected);
+    return;
+  }
+
   if (!currentSdk) {
     logSdkEvent('appStatusError', 'Create a Lovense session first.');
     return;
@@ -235,6 +279,16 @@ async function checkAppStatus() {
 }
 
 async function getToys() {
+  if (!currentSdk && state.room?.lovense) {
+    syncLovenseRoomState(state.room);
+    logSdkEvent('getToys', {
+      onlineToys: connectedToys(),
+      toys: state.toys,
+      route: 'backend-socket'
+    });
+    return;
+  }
+
   if (!currentSdk) {
     logSdkEvent('getToysError', 'Create a Lovense session first.');
     return;
@@ -263,7 +317,7 @@ async function refreshSdkState() {
 }
 
 async function stopToys() {
-  if (!currentSdk) {
+  if (!currentSdk && !state.room?.id) {
     logSdkEvent('stopError', 'Create a Lovense session first.');
     return;
   }
@@ -276,12 +330,17 @@ async function stopToys() {
 
   logSdkEvent('hardStopStarted', {
     routeGeneration: routingGeneration,
-    toys: summarizeToyTargets(connectedToys())
+    toys: summarizeToyTargets(connectedToys()),
+    route: backendLovenseReady() ? 'backend-socket' : 'browser-sdk'
   });
 
-  tryRoomStop();
-  fireHardStopBurst();
-  setTimeout(fireHardStopBurst, 180);
+  await tryRoomStop();
+
+  if (currentSdk) {
+    fireHardStopBurst();
+    setTimeout(fireHardStopBurst, 180);
+  }
+
   setTimeout(() => {
     getToys();
   }, 900);
@@ -293,25 +352,7 @@ async function createRoom() {
 
   try {
     const hostName = document.querySelector('[name="uname"]').value || 'Host';
-    const response = await fetchWithTimeout('/api/rooms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hostName })
-    }, 10000);
-    const room = await response.json();
-
-    if (!response.ok) {
-      throw new Error(room.error || 'Could not create room.');
-    }
-
-    state = {
-      ...state,
-      room
-    };
-    const url = new URL('/controller.html', window.location.origin);
-    url.searchParams.set('room', room.id);
-    url.searchParams.set('name', 'Controller');
-    controllerLink.value = url.toString();
+    const room = await ensureRoom(hostName, true);
     logSdkEvent('roomCreated', { room: room.id });
     renderControllers();
     startRoomPolling();
@@ -322,6 +363,34 @@ async function createRoom() {
     createRoomButton.disabled = false;
     createRoomButton.textContent = 'Create Room';
   }
+}
+
+async function ensureRoom(hostName, forceNew = false) {
+  if (state.room?.id && !forceNew) return state.room;
+
+  const response = await fetchWithTimeout('/api/rooms', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hostName })
+  }, 10000);
+  const room = await response.json();
+
+  if (!response.ok) {
+    throw new Error(room.error || 'Could not create room.');
+  }
+
+  state = {
+    ...state,
+    room
+  };
+  const url = new URL('/controller.html', window.location.origin);
+  url.searchParams.set('room', room.id);
+  url.searchParams.set('name', 'Controller');
+  controllerLink.value = url.toString();
+  renderControllers();
+  startRoomPolling();
+  updateRoomSafety();
+  return room;
 }
 
 function startRoomPolling() {
@@ -385,8 +454,45 @@ async function updateRoomState(room) {
     ...state,
     room
   };
+  syncRoomSafetyControls(room);
+  syncLovenseRoomState(room);
   renderControllers();
   await applyControllerIntent();
+}
+
+async function updateRoomSafety() {
+  if (!state.room?.id) return;
+
+  try {
+    const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/safety`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        routingEnabled: routingEnabled.checked,
+        intensityCap: clampIntensity(intensityCap.value)
+      })
+    }, 2000);
+    const room = await response.json();
+
+    if (!response.ok) {
+      throw new Error(room.error || 'Safety update failed.');
+    }
+
+    state = {
+      ...state,
+      room
+    };
+    syncRoomSafetyControls(room);
+    renderControllers();
+  } catch (error) {
+    logSdkEvent('safetyUpdateError', errorToText(error));
+  }
+}
+
+function syncRoomSafetyControls(room) {
+  if (!room?.safety) return;
+  intensityCap.value = clampIntensity(room.safety.intensityCap);
+  routingEnabled.checked = Boolean(room.safety.routingEnabled);
 }
 
 async function handleControllerAction(event) {
@@ -531,6 +637,7 @@ async function handleControllerAssignment(event) {
 }
 
 async function applyControllerIntent() {
+  if (backendLovenseReady()) return;
   if (!currentSdk || !state.room || !routingEnabled.checked) return;
   if (routingBusy) {
     routingQueued = true;
@@ -550,29 +657,22 @@ async function applyControllerIntent() {
     const onlineToyIds = new Set(connectedToys().map((toy) => toy.id).filter(Boolean));
     const now = Date.now();
     const routes = state.room.controllers.filter((controller) => {
-      const pendingGestures = pendingGestureEvents(controller);
       return controller.approved
         && !controller.revoked
         && controller.assignedToyId
         && onlineToyIds.has(controller.assignedToyId)
-        && (controller.intent?.active || pendingGestures.length > 0);
+        && controller.intent?.active;
     });
 
     for (const controller of routes) {
       if (activeToyIds.has(controller.assignedToyId)) continue;
 
-      const pendingGestures = pendingGestureEvents(controller);
       const desired = Math.min(clampIntensity(intensityCap.value), clampIntensity(controller.intent.intensity));
-      const mode = pendingGestures.length > 0 ? 'gesture' : controller.intent.mode === 'pattern' ? 'pattern' : 'level';
+      const mode = controller.intent.mode === 'pattern' ? 'pattern' : 'level';
       const previous = lastToyCommands.get(controller.assignedToyId);
 
       activeToyIds.add(controller.assignedToyId);
       const toy = toyById(controller.assignedToyId);
-
-      if (mode === 'gesture') {
-        await replayGestureEvents(controller, pendingGestures, toy, runGeneration);
-        continue;
-      }
 
       if (runGeneration !== routingGeneration) return;
 
@@ -658,40 +758,6 @@ async function applyControllerIntent() {
   }
 }
 
-async function replayGestureEvents(controller, events, toy, runGeneration) {
-  const cap = clampIntensity(intensityCap.value);
-  const orderedEvents = events
-    .slice(0, 24)
-    .sort((a, b) => a.id - b.id);
-
-  for (const event of orderedEvents) {
-    if (runGeneration !== routingGeneration || !routingEnabled.checked) return;
-
-    const intensity = Math.min(cap, clampIntensity(event.intensity));
-    try {
-      const result = await sendVibrateCommand(controller.assignedToyId, intensity);
-      lastGestureIds.set(controller.id, event.id);
-      lastToyCommands.set(controller.assignedToyId, {
-        mode: 'gesture',
-        intensity,
-        controllerId: controller.id,
-        at: Date.now()
-      });
-      logSdkEvent('routedGestureSample', {
-        controller: controller.name,
-        sent: intensity,
-        target: toy ? summarizeToyTargets([toy])[0] : controller.assignedToyId,
-        sample: event.id,
-        result: result || 'sent'
-      });
-      await wait(55);
-    } catch (error) {
-      logSdkEvent('routingGestureError', errorToText(error));
-      break;
-    }
-  }
-}
-
 async function stopToy(toyId) {
   try {
     const result = await sendHardStopCommand(toyId);
@@ -712,7 +778,7 @@ async function handleToyListClick(event) {
 }
 
 async function testVibrateAll() {
-  if (!currentSdk) {
+  if (!currentSdk && !backendLovenseReady()) {
     logSdkEvent('testVibrateError', 'Create a Lovense session first.');
     return;
   }
@@ -726,6 +792,19 @@ async function testVibrateAll() {
     const targets = connectedToys();
     const command = testCommand();
 
+    if (backendLovenseReady()) {
+      const result = await sendBackendLovenseCommand({
+        action: `Vibrate:${clampIntensity(testIntensity.value)}`,
+        timeSec: 2
+      });
+      logSdkEvent('testVibrateAll', {
+        command,
+        targets: summarizeToyTargets(targets),
+        result
+      });
+      return;
+    }
+
     const result = await currentSdk.sendToyCommand(command);
     logSdkEvent('testVibrateAll', {
       command,
@@ -738,7 +817,7 @@ async function testVibrateAll() {
 }
 
 async function testVibrateToy(toyId) {
-  if (!currentSdk) {
+  if (!currentSdk && !backendLovenseReady()) {
     logSdkEvent('testVibrateError', 'Create a Lovense session first.');
     return;
   }
@@ -754,6 +833,21 @@ async function testVibrateToy(toyId) {
       ...testCommand(),
       toyId
     };
+
+    if (backendLovenseReady()) {
+      const result = await sendBackendLovenseCommand({
+        toyId,
+        action: `Vibrate:${clampIntensity(testIntensity.value)}`,
+        timeSec: 2
+      });
+      logSdkEvent('testVibrateToy', {
+        command,
+        target: summarizeToyTargets([toy])[0],
+        result
+      });
+      return;
+    }
+
     const result = await currentSdk.sendToyCommand(command);
     logSdkEvent('testVibrateToy', {
       command,
@@ -919,10 +1013,10 @@ async function sendLanFunction({ action, toyId = '', timeoutMs = 700 }) {
   }
 }
 
-function tryRoomStop() {
+async function tryRoomStop() {
   if (!state.room?.id) return;
 
-  fetchWithTimeout(`/api/rooms/${state.room.id}/stop`, {
+  return fetchWithTimeout(`/api/rooms/${state.room.id}/stop`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }
   }, 1000).then((response) => response.json()).then((room) => {
@@ -930,10 +1024,22 @@ function tryRoomStop() {
       ...state,
       room
     };
+    syncLovenseRoomState(room);
     renderControllers();
   }).catch((error) => {
     logSdkEvent('roomStopError', errorToText(error));
   });
+}
+
+async function sendBackendLovenseCommand(payload) {
+  const response = await fetchWithTimeout(`/api/rooms/${state.room.id}/lovense/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, 3000);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Backend Lovense command failed.');
+  return data;
 }
 
 function testCommand() {
@@ -991,6 +1097,7 @@ function errorToText(error) {
 }
 
 function renderHostState() {
+  const lovenseReady = backendLovenseReady();
   backendStatus.textContent = state.backendOk ? 'Online' : 'Not checked';
   backendStatus.className = state.backendOk ? 'good' : 'warn';
 
@@ -1000,8 +1107,8 @@ function renderHostState() {
   toyStatus.textContent = state.toyOnline ? 'Online' : 'No toy detected';
   toyStatus.className = state.toyOnline ? 'good' : 'warn';
 
-  stopToysButton.disabled = !currentSdk;
-  testVibrateButton.disabled = !currentSdk || !state.toyOnline;
+  stopToysButton.disabled = !currentSdk && !state.room?.id;
+  testVibrateButton.disabled = (!currentSdk && !lovenseReady) || !state.toyOnline;
 
   if (state.toys.length === 0) {
     toyList.textContent = state.appConnected
@@ -1011,6 +1118,27 @@ function renderHostState() {
   }
 
   toyList.replaceChildren(...state.toys.map(renderToy));
+}
+
+function syncLovenseRoomState(room) {
+  const lovense = room?.lovense;
+  if (!lovense) return;
+
+  const toys = normalizeToyList(lovense.toys || []);
+  state = {
+    ...state,
+    appConnected: Boolean(lovense.appConnected || lovense.deviceInfo),
+    toyOnline: toys.some((toy) => toy.connected),
+    toys,
+    deviceInfo: lovense.deviceInfo || null
+  };
+
+  renderBackendLovenseQr(lovense);
+  renderHostState();
+}
+
+function backendLovenseReady() {
+  return state.room?.lovense?.socketStatus === 'connected';
 }
 
 function renderToy(toy) {
@@ -1120,7 +1248,7 @@ function clearLocalControllerActivity() {
 }
 
 function intentLabel(intent) {
-  if (intent.mode === 'gesture') return `replaying ${intent.intensity}/20`;
+  if (intent.mode === 'gesture') return `requesting ${intent.intensity}/20`;
   if (intent.mode === 'pattern') return 'requesting pattern';
   return `requesting ${intent.intensity}/20`;
 }
