@@ -662,9 +662,12 @@ function renderController(controller) {
   name.textContent = controller.name || 'Controller';
   const details = document.createElement('span');
   const assignedToy = toyById(controller.assignedToyId);
+  const assignedLabel = assignedToy
+    ? `${toyLabel(assignedToy)}${assignedToy.connected ? '' : ' · offline'}`
+    : controller.assignedToyName || '';
   details.textContent = [
     controller.revoked ? 'revoked' : controller.approved ? 'approved' : 'pending',
-    assignedToy ? `assigned to ${toyLabel(assignedToy)}` : 'no toy assigned',
+    assignedLabel ? `assigned to ${assignedLabel}` : 'no toy assigned',
     controller.intent?.active ? intentLabel(controller.intent) : 'idle'
   ].join(' · ');
   info.append(name, details);
@@ -682,10 +685,10 @@ function renderController(controller) {
   empty.textContent = state.toys.length === 0 ? 'No toys detected' : 'Choose toy';
   select.append(empty);
 
-  state.toys.forEach((toy) => {
+  sortedToys().forEach((toy) => {
     const option = document.createElement('option');
     option.value = toy.id;
-    option.textContent = toyLabel(toy);
+    option.textContent = toy.connected ? toyLabel(toy) : `${toyLabel(toy)} · offline`;
     option.disabled = !toy.connected || !toy.id;
     select.append(option);
   });
@@ -1263,7 +1266,7 @@ function renderHostState() {
     return;
   }
 
-  toyList.replaceChildren(...state.toys.map(renderToy));
+  toyList.replaceChildren(...sortedToys().map(renderToy));
 }
 
 function syncLovenseRoomState(room) {
@@ -1289,7 +1292,7 @@ function backendLovenseReady() {
 
 function renderToy(toy) {
   const item = document.createElement('div');
-  item.className = 'toy-item';
+  item.className = toy.connected ? 'toy-item' : 'toy-item offline-toy';
   const setting = toySetting(toy.id);
 
   const info = document.createElement('div');
@@ -1301,7 +1304,7 @@ function renderToy(toy) {
   const details = document.createElement('span');
   details.textContent = [
     toyModelLabel(toy),
-    toy.connected ? 'online' : 'offline',
+    toy.connected ? 'online' : 'remembered · offline',
     formatBattery(toy.battery),
     `cap ${setting.cap}/20`,
     toy.id ? `id ${toy.id}` : null
@@ -1338,7 +1341,7 @@ function renderToy(toy) {
 
   const test = document.createElement('button');
   test.type = 'button';
-  test.textContent = 'Test This Toy';
+  test.textContent = toy.connected ? 'Test This Toy' : 'Offline';
   test.disabled = !toy.connected || !toy.id;
   test.dataset.testToyId = toy.id;
 
@@ -1350,6 +1353,13 @@ function renderToy(toy) {
 function connectedToys() {
   const toys = state.toys.filter((toy) => toy.connected);
   return toys.length > 0 ? toys : state.toys;
+}
+
+function sortedToys() {
+  return [...state.toys].sort((a, b) => {
+    if (a.connected !== b.connected) return a.connected ? -1 : 1;
+    return toyLabel(a).localeCompare(toyLabel(b), undefined, { sensitivity: 'base' });
+  });
 }
 
 function toyById(toyId) {

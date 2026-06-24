@@ -693,6 +693,16 @@ button:disabled {
   background: #0d0f12;
 }
 
+.offline-toy {
+  opacity: 0.72;
+}
+
+.offline-toy .button-row button:disabled {
+  border-color: #444857;
+  background: #20232b;
+  color: var(--muted);
+}
+
 .toy-info {
   display: grid;
   gap: 3px;
