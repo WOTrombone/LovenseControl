@@ -1393,6 +1393,10 @@ function normalizeToyList(value) {
   }));
 }
 
+function cleanId(value) {
+  return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+}
+
 function clampIntensity(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;

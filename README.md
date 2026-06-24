@@ -6,7 +6,7 @@ The goal is to let a toy owner/host connect toys, approve invited controllers, a
 
 ## Current Build
 
-This is v0.18.3: backend-socket responsiveness and host-room URL recovery stabilization.
+This is v0.18.4: backend-socket responsiveness and host-room URL recovery stabilization.
 
 - `GET /health` confirms the Render service is alive.
 - `POST /api/lovense/token` requests a Lovense user auth token from the server side.
