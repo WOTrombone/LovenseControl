@@ -42,6 +42,309 @@ body {
   background: var(--panel);
 }
 
+.controller-page {
+  background: #12111b;
+}
+
+.controller-page .controller-shell {
+  align-items: stretch;
+  min-height: 100dvh;
+  padding: 0;
+}
+
+.controller-page .controller-card {
+  display: grid;
+  grid-template-rows: auto auto auto auto 1fr;
+  gap: 14px;
+  width: min(520px, 100%);
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 18px;
+  border: 0;
+  border-radius: 0;
+  background: #15141f;
+}
+
+.controller-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.control-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-dot {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, #ff4f9a 0 28%, #3a1e38 30% 58%, #15141f 60%);
+  box-shadow: 0 0 22px rgb(255 79 139 / 35%);
+}
+
+.controller-topbar .eyebrow {
+  margin-bottom: 2px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.controller-topbar h1 {
+  margin: 0;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.power-button {
+  min-width: 58px;
+  min-height: 44px;
+  border: 1px solid rgb(255 79 139 / 45%);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: #211525;
+  color: var(--accent);
+  box-shadow: 0 0 18px rgb(255 79 139 / 18%);
+}
+
+.members-card {
+  padding: 18px;
+  border-radius: 18px;
+  background: #262535;
+}
+
+.members-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.members-heading h2 {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 650;
+}
+
+.status-pill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #353447;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.member-strip {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.member-token {
+  display: grid;
+  min-width: 78px;
+  justify-items: center;
+  gap: 4px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.member-token strong {
+  max-width: 100px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.95rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-token span:last-child {
+  font-size: 0.78rem;
+}
+
+.avatar {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border: 2px solid #27304a;
+  border-radius: 50%;
+  background: #1a263d;
+  color: #2bb8ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.active-member .avatar {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 16px rgb(255 79 139 / 30%);
+}
+
+.host-avatar {
+  color: #7bdcff;
+}
+
+.controller-page .controller-status {
+  margin: 0;
+  border-color: transparent;
+  border-radius: 14px;
+  background: #262535;
+}
+
+.controller-message {
+  color: var(--muted);
+}
+
+.join-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.join-panel[hidden] {
+  display: none;
+}
+
+.control-deck {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto 1fr;
+  column-gap: 18px;
+  min-height: 430px;
+  margin: 0 -18px -18px;
+  padding: 0 18px 20px;
+  border-top: 1px solid #242334;
+  background: #171622;
+}
+
+.signal-line {
+  grid-column: 1 / -1;
+  height: 46px;
+  margin: 0 -18px;
+  background:
+    linear-gradient(90deg, transparent, var(--accent), transparent) center / 100% 3px no-repeat,
+    radial-gradient(circle at right center, var(--accent) 0 9px, transparent 10px);
+}
+
+.toy-count {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.control-deck .control-label {
+  grid-column: 1 / -1;
+  justify-self: center;
+  margin: 0;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.controller-page .vertical-slider-wrap {
+  position: relative;
+  align-self: center;
+  justify-self: center;
+  width: 180px;
+  min-height: 330px;
+}
+
+.controller-page .vertical-slider {
+  width: 96px;
+  height: 300px;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  -webkit-appearance: none;
+}
+
+.controller-page .vertical-slider::-webkit-slider-runnable-track {
+  width: 14px;
+  border-radius: 999px;
+  background: #343244;
+}
+
+.controller-page .vertical-slider::-webkit-slider-thumb {
+  width: 72px;
+  height: 72px;
+  margin-left: -29px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 24px rgb(255 79 139 / 50%);
+  -webkit-appearance: none;
+}
+
+.controller-page .vertical-slider::-moz-range-track {
+  width: 14px;
+  border-radius: 999px;
+  background: #343244;
+}
+
+.controller-page .vertical-slider::-moz-range-thumb {
+  width: 72px;
+  height: 72px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 24px rgb(255 79 139 / 50%);
+}
+
+.controller-page #intensity-output {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  min-width: 86px;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #262535;
+  color: var(--text);
+  font-size: 1.1rem;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+.scale-label {
+  position: absolute;
+  left: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.scale-high {
+  top: 12px;
+}
+
+.scale-low {
+  bottom: 14px;
+}
+
+.mode-rail {
+  display: grid;
+  align-self: center;
+  gap: 18px;
+  min-width: 82px;
+}
+
+.mode {
+  display: grid;
+  place-items: center;
+  min-height: 52px;
+  border-left: 1px solid #302f42;
+  color: #8c8a9a;
+  font-weight: 700;
+  text-align: center;
+}
+
+.mode.active {
+  color: var(--accent);
+}
+
 .hero {
   margin-bottom: 24px;
 }
@@ -178,6 +481,33 @@ label {
   margin-top: 18px;
 }
 
+.vertical-control {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.vertical-control .control-label {
+  margin-top: 0;
+}
+
+.vertical-slider-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  min-height: 340px;
+}
+
+.vertical-slider {
+  width: 72px;
+  height: 280px;
+  padding: 0;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  touch-action: none;
+}
+
 input[type="range"] {
   accent-color: var(--accent);
 }
@@ -205,7 +535,7 @@ output {
 }
 
 .controller-actions button {
-  flex: 1;
+  width: 100%;
 }
 
 input,

@@ -7,16 +7,40 @@
   <link rel="stylesheet" href="/styles.css">
   <script src="/controller.js" defer></script>
 </head>
-<body>
+<body class="controller-page">
   <main class="controller-shell">
     <section class="controller-card">
-      <p class="eyebrow">LovenseControl</p>
-      <h1 id="controller-title">Controller</h1>
-      <p id="room-label" class="hint">Waiting for a room.</p>
+      <header class="controller-topbar">
+        <div class="control-brand">
+          <span class="brand-dot" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">LovenseControl</p>
+            <h1>Control Link</h1>
+          </div>
+        </div>
+        <button id="release-stop" type="button" class="power-button" disabled aria-label="Stop and set intensity to zero">STOP</button>
+      </header>
 
-      <div class="controller-status">
-        <span class="status-label">Status</span>
-        <strong id="controller-status">Not connected</strong>
+      <section class="members-card" aria-label="Room status">
+        <div class="members-heading">
+          <h2>Room</h2>
+          <span id="controller-status" class="status-pill">Not connected</span>
+        </div>
+        <div class="member-strip">
+          <div class="member-token">
+            <span class="avatar host-avatar" aria-hidden="true">H</span>
+            <strong>Host</strong>
+            <span>Approves</span>
+          </div>
+          <div class="member-token active-member">
+            <span class="avatar" aria-hidden="true">You</span>
+            <strong id="controller-title">Controller</strong>
+            <span id="room-label">Waiting</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="controller-status controller-message">
         <p id="controller-note">
           Ask the host for an invite link. The host approves access before this page can send requests.
         </p>
@@ -28,22 +52,31 @@
         <p id="assigned-toy-note">The host chooses which toy this controller can affect.</p>
       </div>
 
-      <label>
-        Display name
-        <input id="controller-name" autocomplete="name" value="Controller">
-      </label>
-      <button id="request-access" type="button">Request Control</button>
-
-      <label class="control-label">
-        Live intensity request
-        <input id="intensity" type="range" min="0" max="20" value="0" disabled>
-      </label>
-      <output id="intensity-output">0 / 20</output>
-
-      <div class="button-row controller-actions">
-        <button id="send-held" type="button" disabled>Send Current Level</button>
-        <button id="release-stop" type="button" class="danger-button" disabled>Stop / Set 0</button>
+      <div class="join-panel">
+        <label>
+          Display name
+          <input id="controller-name" autocomplete="name" value="Controller">
+        </label>
+        <button id="request-access" type="button">Request Control</button>
       </div>
+
+      <section class="control-deck" aria-label="Live intensity request">
+        <div class="signal-line" aria-hidden="true"></div>
+        <p class="toy-count">Assigned toy</p>
+        <label class="control-label" for="intensity">Live intensity</label>
+        <div class="vertical-slider-wrap">
+          <span class="scale-label scale-high">100%</span>
+          <input id="intensity" class="vertical-slider" type="range" min="0" max="20" value="0" disabled>
+          <output id="intensity-output">0 / 20</output>
+          <span class="scale-label scale-low">0</span>
+        </div>
+
+        <aside class="mode-rail" aria-label="Control modes">
+          <span class="mode active">Live</span>
+          <span class="mode">Loop soon</span>
+          <span class="mode">Pattern soon</span>
+        </aside>
+      </section>
     </section>
   </main>
 </body>

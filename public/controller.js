@@ -8,11 +8,11 @@ const statusText = document.querySelector('#controller-status');
 const note = document.querySelector('#controller-note');
 const assignedToy = document.querySelector('#assigned-toy');
 const assignedToyNote = document.querySelector('#assigned-toy-note');
+const joinPanel = document.querySelector('.join-panel');
 const nameInput = document.querySelector('#controller-name');
 const requestButton = document.querySelector('#request-access');
 const intensity = document.querySelector('#intensity');
 const intensityOutput = document.querySelector('#intensity-output');
-const sendHeld = document.querySelector('#send-held');
 const releaseStop = document.querySelector('#release-stop');
 
 let controllerId = '';
@@ -35,7 +35,6 @@ intensity.addEventListener('input', () => {
   renderIntensity();
   scheduleSendCurrentLevel();
 });
-sendHeld.addEventListener('click', sendCurrentLevel);
 releaseStop.addEventListener('click', stopSending);
 
 renderState();
@@ -57,11 +56,13 @@ async function requestAccess() {
     if (!response.ok) throw new Error(data.error || 'Access request failed.');
 
     controllerId = data.id;
+    joinPanel.hidden = true;
     renderController(data);
     startPolling();
   } catch (error) {
     statusText.textContent = 'Request failed';
     note.textContent = errorToText(error);
+    joinPanel.hidden = false;
     requestButton.disabled = false;
     requestButton.textContent = 'Request Control';
   }
@@ -99,32 +100,41 @@ function renderController(controller) {
 
   if (revoked) {
     statusText.textContent = 'Revoked';
+    statusText.className = 'status-pill warn';
+    roomLabel.textContent = 'Revoked';
     note.textContent = 'The host has revoked this controller.';
-    requestButton.hidden = true;
+    joinPanel.hidden = true;
     setControlEnabled(false);
     return;
   }
 
   if (approved) {
     statusText.textContent = 'Approved';
+    statusText.className = hasAssignedToy ? 'status-pill good' : 'status-pill warn';
+    roomLabel.textContent = hasAssignedToy ? 'Controlling' : 'Waiting';
     note.textContent = hasAssignedToy
       ? 'Move the slider to send a level. Set it to 0 or press Stop to stop.'
       : 'Waiting for the host to assign a toy.';
-    requestButton.hidden = true;
+    joinPanel.hidden = true;
     setControlEnabled(hasAssignedToy);
     return;
   }
 
   statusText.textContent = 'Pending host approval';
+  statusText.className = 'status-pill warn';
+  roomLabel.textContent = 'Pending';
   note.textContent = 'The host can approve or revoke this request from their dashboard.';
-  requestButton.hidden = true;
+  joinPanel.hidden = true;
   setControlEnabled(false);
 }
 
 function renderState() {
   if (!roomId) {
     statusText.textContent = 'Missing room';
+    statusText.className = 'status-pill warn';
+    roomLabel.textContent = 'Missing room';
     note.textContent = 'Open a controller invite link from the host dashboard.';
+    joinPanel.hidden = false;
     assignedToy.textContent = 'Not assigned yet';
     assignedToyNote.textContent = 'The host chooses which toy this controller can affect.';
     setControlEnabled(false);
@@ -172,7 +182,6 @@ function setControlEnabled(enabled) {
   controlsEnabled = enabled;
   if (!enabled && sendTimer) clearTimeout(sendTimer);
   intensity.disabled = !enabled;
-  sendHeld.disabled = !enabled;
   releaseStop.disabled = !enabled;
 }
 
